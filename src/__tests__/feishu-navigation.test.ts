@@ -12,6 +12,7 @@ import { JsonFileStore } from '../store.js';
 import { sseEvent } from '../sse-utils.js';
 
 const DATA_DIR = path.join(CTI_HOME, 'data');
+const TEST_CODEX_HOME = path.join(CTI_HOME, 'codex-home');
 
 function makeSettings(): Map<string, string> {
   return new Map([
@@ -39,6 +40,26 @@ function initTestContext(store: JsonFileStore): void {
   });
 }
 
+function writeCodexSession(id: string, threadName: string, cwd: string, updatedAt = '2026-04-11T00:00:00.000Z'): void {
+  fs.mkdirSync(TEST_CODEX_HOME, { recursive: true });
+  fs.appendFileSync(
+    path.join(TEST_CODEX_HOME, 'session_index.jsonl'),
+    `${JSON.stringify({ id, thread_name: threadName, updated_at: updatedAt })}\n`,
+    'utf8',
+  );
+  const sessionDir = path.join(TEST_CODEX_HOME, 'sessions', '2026', '04', '11');
+  fs.mkdirSync(sessionDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(sessionDir, `rollout-${id}.jsonl`),
+    `${JSON.stringify({
+      timestamp: updatedAt,
+      type: 'session_meta',
+      payload: { id, cwd, timestamp: updatedAt },
+    })}\n`,
+    'utf8',
+  );
+}
+
 function makeNavCallbackMessage(callbackData: string, callbackMessageId = 'om_nav_1') {
   return {
     messageId: `evt_${Math.random().toString(36).slice(2, 10)}`,
@@ -59,6 +80,9 @@ function makeNavCallbackMessage(callbackData: string, callbackMessageId = 'om_na
 describe('Feishu navigation cards', () => {
   beforeEach(() => {
     fs.rmSync(DATA_DIR, { recursive: true, force: true });
+    fs.rmSync(TEST_CODEX_HOME, { recursive: true, force: true });
+    process.env.CODEX_HOME = TEST_CODEX_HOME;
+    (bridgeTestOnly.clearCodexDiscoveryCache as () => void)();
   });
 
   it('encodes and decodes project paths for callback payloads', () => {
@@ -134,6 +158,41 @@ describe('Feishu navigation cards', () => {
     assert.equal(groups[0].sessions[0].id, active.id);
   });
 
+  it('discovers codex workspaces and groups them with bridge sessions', () => {
+    writeCodexSession('11111111-1111-4111-8111-111111111111', '小米手环排查', 'D:\\hardware\\mi-band');
+    writeCodexSession('22222222-2222-4222-8222-222222222222', 'Koishi mobile card', 'D:\\cs\\KoishiNavigationWorkArea');
+
+    const store = new JsonFileStore(makeSettings());
+    initTestContext(store);
+
+    const bridgeSession = store.createSession('Firebook backend', 'gpt-5', undefined, 'D:\\lua\\fireBookStore-backend\\firebookstore-dotnet');
+    const binding = store.upsertChannelBinding({
+      channelType: 'feishu',
+      chatId: 'chat-1',
+      codepilotSessionId: bridgeSession.id,
+      workingDirectory: 'D:\\lua\\fireBookStore-backend\\firebookstore-dotnet',
+      model: 'gpt-5',
+    });
+
+    const allGroups = bridgeTestOnly.buildProjectGroups(binding);
+    const workspaces = bridgeTestOnly.buildWorkspaceGroups(binding);
+    const koishiCard = bridgeTestOnly.buildFeishuProjectListCard(
+      bridgeTestOnly.buildProjectGroups(binding, 'global', 'D:\\cs'),
+      binding,
+      'global',
+      'D:\\cs',
+    );
+
+    assert.equal(allGroups.some((group: any) => group.path === 'D:\\hardware\\mi-band'), true);
+    assert.equal(allGroups.some((group: any) => group.path === 'D:\\cs\\KoishiNavigationWorkArea'), true);
+    assert.equal(workspaces.some((group: any) => group.path === 'D:\\hardware'), true);
+    assert.equal(workspaces.some((group: any) => group.path === 'D:\\cs'), true);
+    assert.match(koishiCard, /Workspace/);
+    assert.match(koishiCard, /KoishiNavigationWorkArea/);
+    assert.doesNotMatch(koishiCard, /mi-band/);
+    assert.match(koishiCard, /nav:workspace:/);
+  });
+
   it('builds project and session cards with navigation callbacks', () => {
     const store = new JsonFileStore(makeSettings());
     initTestContext(store);
@@ -177,8 +236,8 @@ describe('Feishu navigation cards', () => {
     assert.match(projectCard, /nav:project:/);
     assert.match(projectCard, /Projects|alpha-service/);
     assert.match(projectCard, /Open Sessions/);
-    assert.match(projectCard, /Global/);
-    assert.match(projectCard, /Sessions/);
+    assert.match(projectCard, /All|Workspace/);
+    assert.match(projectCard, /nav:workspace:|All \*/);
     assert.equal(workspaceGroups.some((group: any) => group.path === 'D:\\projects\\beta-service'), true);
     assert.equal(groups.some((group: any) => group.path === 'E:\\other\\gamma-service'), true);
     assert.equal(workspaceGroups.some((group: any) => group.path === 'E:\\other\\gamma-service'), false);
@@ -192,7 +251,7 @@ describe('Feishu navigation cards', () => {
     assert.match(sessionsCard, /nav:bind:/);
     assert.match(sessionsCard, /Open Sessions/);
     assert.match(sessionsCard, /Projects/);
-    assert.match(sessionsCard, /Workspace/);
+    assert.match(sessionsCard, /projects|nav:workspace:/);
     assert.match(sessionsCard, /nav:peek:/);
     assert.match(sessionsCard, /nav:archive:/);
     assert.match(sessionsCard, new RegExp(`"session_id":"${alpha.id}"`));
@@ -310,6 +369,16 @@ describe('Feishu navigation cards', () => {
 
     assert.equal(queued.length, 3);
     assert.equal(queued[2].callbackData, 'nav:projects:workspace');
+
+    await adapter.handleCardAction({
+      token: 'token_structured_workspace',
+      action: { value: { nav: 'workspace', workspace_path: 'D:\\cs' } },
+      context: { open_chat_id: 'chat-1', open_message_id: 'om_card_5' },
+      operator: { open_id: 'ou_user_1' },
+    });
+
+    assert.equal(queued.length, 4);
+    assert.equal(queued[3].callbackData, `nav:workspace:${Buffer.from('D:\\cs', 'utf8').toString('base64url')}`);
   });
 
   it('treats a resolved card patch without code as successful in-place update', async () => {
@@ -561,6 +630,55 @@ describe('Feishu navigation cards', () => {
     assert.match(sends.at(-1)!.text, /alpha-service/);
 
     assert.deepEqual(acked, [1, 1, 1, 1, 1, 1, 1, 1]);
+  });
+
+  it('binds a discovered codex session by creating a bridge mirror with sdk session id', async () => {
+    writeCodexSession(
+      '33333333-3333-4333-8333-333333333333',
+      '小米手环的会话',
+      'D:\\hardware\\mi-band',
+    );
+
+    const store = new JsonFileStore(makeSettings());
+    initTestContext(store);
+
+    const current = store.createSession('Bridge current', 'gpt-5', undefined, 'D:\\lua\\fireBookStore-backend\\firebookstore-dotnet');
+    store.upsertChannelBinding({
+      channelType: 'feishu',
+      chatId: 'chat-1',
+      codepilotSessionId: current.id,
+      workingDirectory: current.working_directory,
+      model: 'gpt-5',
+      mode: 'code',
+    });
+
+    const sends: Array<{ text: string; updateMessageId?: string }> = [];
+    const fakeAdapter = {
+      channelType: 'feishu',
+      async send(message: { text: string; updateMessageId?: string }) {
+        sends.push(message);
+        return { ok: true, messageId: message.updateMessageId || `msg_${sends.length}` };
+      },
+      acknowledgeUpdate() {},
+    } as any;
+
+    await bridgeTestOnly.handleMessage(
+      fakeAdapter,
+      makeNavCallbackMessage('nav:bind:33333333-3333-4333-8333-333333333333', 'om_bind_codex'),
+    );
+
+    const rebound = store.getChannelBinding('feishu', 'chat-1');
+    assert.ok(rebound);
+    assert.notEqual(rebound!.codepilotSessionId, '33333333-3333-4333-8333-333333333333');
+    assert.equal(rebound!.sdkSessionId, '33333333-3333-4333-8333-333333333333');
+    assert.equal(rebound!.workingDirectory, 'D:\\hardware\\mi-band');
+
+    const mirrored = store.getSession(rebound!.codepilotSessionId) as any;
+    assert.equal(mirrored?.sdk_session_id, '33333333-3333-4333-8333-333333333333');
+    assert.equal(mirrored?.name, '小米手环的会话');
+    assert.equal(sends.at(-1)?.updateMessageId, 'om_bind_codex');
+    assert.match(sends.at(-1)!.text, /Current Session/);
+    assert.match(sends.at(-1)!.text, /mi-band/);
   });
 
   it('does not send a second reply card after a streaming card finalized', async () => {

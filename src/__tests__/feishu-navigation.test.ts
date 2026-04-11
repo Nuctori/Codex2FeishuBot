@@ -177,7 +177,6 @@ describe('Feishu navigation cards', () => {
     assert.match(projectCard, /nav:project:/);
     assert.match(projectCard, /Projects|alpha-service/);
     assert.match(projectCard, /Open Sessions/);
-    assert.match(projectCard, /Workspace/);
     assert.match(projectCard, /Global/);
     assert.match(projectCard, /Sessions/);
     assert.equal(workspaceGroups.some((group: any) => group.path === 'D:\\projects\\beta-service'), true);

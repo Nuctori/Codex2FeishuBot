@@ -176,7 +176,7 @@ describe('Feishu navigation cards', () => {
 
     assert.match(projectCard, /nav:project:/);
     assert.match(projectCard, /Projects|alpha-service/);
-    assert.match(projectCard, /Session Dock/);
+    assert.match(projectCard, /Open Sessions/);
     assert.match(projectCard, /Workspace/);
     assert.match(projectCard, /Global/);
     assert.match(projectCard, /Sessions/);
@@ -191,7 +191,9 @@ describe('Feishu navigation cards', () => {
     assert.match(replyNavCard, /Current Project/);
     assert.match(replyNavCard, /All Projects/);
     assert.match(sessionsCard, /nav:bind:/);
-    assert.match(sessionsCard, /Session Dock/);
+    assert.match(sessionsCard, /Open Sessions/);
+    assert.match(sessionsCard, /Projects/);
+    assert.match(sessionsCard, /Workspace/);
     assert.match(sessionsCard, /nav:peek:/);
     assert.match(sessionsCard, /nav:archive:/);
     assert.match(sessionsCard, new RegExp(`"session_id":"${alpha.id}"`));
@@ -204,7 +206,7 @@ describe('Feishu navigation cards', () => {
     assert.match(sessionPreviewCard!, /2 msgs/);
     assert.match(statusCard, /nav:projects/);
     assert.match(statusCard, /collapsible_panel/);
-    assert.match(statusCard, /Session Dock/);
+    assert.match(statusCard, /Open Sessions/);
     assert.match(statusCard, /nav:dock:select:/);
     assert.match(statusCard, /nav:dock:close:/);
     assert.match(statusCard, /2 projects/);
@@ -531,7 +533,7 @@ describe('Feishu navigation cards', () => {
     const dockSelected = store.getChannelBinding('feishu', 'chat-1');
     assert.equal(dockSelected?.codepilotSessionId, beta1.id);
     assert.equal(sends.at(-1)?.updateMessageId, 'om_dock_select_beta1');
-    assert.match(sends.at(-1)!.text, /Session Dock/);
+    assert.match(sends.at(-1)!.text, /Open Sessions/);
     assert.match(sends.at(-1)!.text, new RegExp(beta1.id.slice(0, 8)));
 
     const dockCloseMsg = makeNavCallbackMessage(`nav:dock:close:${beta1.id}`, 'om_dock_close_beta1');

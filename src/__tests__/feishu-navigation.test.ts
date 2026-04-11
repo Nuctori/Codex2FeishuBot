@@ -13,6 +13,25 @@ import { sseEvent } from '../sse-utils.js';
 
 const DATA_DIR = path.join(CTI_HOME, 'data');
 const TEST_CODEX_HOME = path.join(CTI_HOME, 'codex-home');
+const TEST_WORKSPACES_DIR = path.join(CTI_HOME, 'workspace-fixtures');
+
+function ensureDir(targetPath: string): string {
+  fs.mkdirSync(targetPath, { recursive: true });
+  return targetPath;
+}
+
+function createWorkspaceFixture(name: string, projectNames: string[] = []): {
+  root: string;
+  codexHome: string;
+  projects: Record<string, string>;
+} {
+  const root = ensureDir(path.join(TEST_WORKSPACES_DIR, name));
+  const codexHome = ensureDir(path.join(root, '.codex'));
+  const projects = Object.fromEntries(
+    projectNames.map((projectName) => [projectName, ensureDir(path.join(root, projectName))]),
+  );
+  return { root, codexHome, projects };
+}
 
 function makeSettings(): Map<string, string> {
   return new Map([
@@ -46,14 +65,15 @@ function writeCodexSession(
   cwd: string,
   updatedAt = '2026-04-11T00:00:00.000Z',
   messages: Array<{ role: 'user' | 'assistant'; content: string }> = [],
+  codexHome = TEST_CODEX_HOME,
 ): void {
-  fs.mkdirSync(TEST_CODEX_HOME, { recursive: true });
+  fs.mkdirSync(codexHome, { recursive: true });
   fs.appendFileSync(
-    path.join(TEST_CODEX_HOME, 'session_index.jsonl'),
+    path.join(codexHome, 'session_index.jsonl'),
     `${JSON.stringify({ id, thread_name: threadName, updated_at: updatedAt })}\n`,
     'utf8',
   );
-  const sessionDir = path.join(TEST_CODEX_HOME, 'sessions', '2026', '04', '11');
+  const sessionDir = path.join(codexHome, 'sessions', '2026', '04', '11');
   fs.mkdirSync(sessionDir, { recursive: true });
   const lines = [
     JSON.stringify({
@@ -72,19 +92,6 @@ function writeCodexSession(
     })),
   ];
   fs.writeFileSync(path.join(sessionDir, `rollout-${id}.jsonl`), `${lines.join('\n')}\n`, 'utf8');
-}
-
-function writeCodexWorkspaceState(savedRoots: string[], activeRoots: string[] = [], labels: Record<string, string> = {}): void {
-  fs.mkdirSync(TEST_CODEX_HOME, { recursive: true });
-  fs.writeFileSync(
-    path.join(TEST_CODEX_HOME, '.codex-global-state.json'),
-    JSON.stringify({
-      'electron-saved-workspace-roots': savedRoots,
-      'active-workspace-roots': activeRoots,
-      'electron-workspace-root-labels': labels,
-    }),
-    'utf8',
-  );
 }
 
 function makeNavCallbackMessage(callbackData: string, callbackMessageId = 'om_nav_1') {
@@ -108,7 +115,9 @@ describe('Feishu navigation cards', () => {
   beforeEach(() => {
     fs.rmSync(DATA_DIR, { recursive: true, force: true });
     fs.rmSync(TEST_CODEX_HOME, { recursive: true, force: true });
+    fs.rmSync(TEST_WORKSPACES_DIR, { recursive: true, force: true });
     process.env.CODEX_HOME = TEST_CODEX_HOME;
+    process.env.CTI_CODEX_DISCOVERY_ROOTS = [TEST_CODEX_HOME, TEST_WORKSPACES_DIR].join(path.delimiter);
     (bridgeTestOnly.clearCodexDiscoveryCache as () => void)();
   });
 
@@ -195,56 +204,59 @@ describe('Feishu navigation cards', () => {
   });
 
   it('discovers codex workspaces and groups them with bridge sessions', () => {
-    writeCodexWorkspaceState([
-      '\\\\?\\D:\\lua\\fireBookStore-backend\\firebookstore-dotnet',
-      'd:\\cs\\KoishiNavigationWorkArea',
-      'I:\\指点江山',
-    ], ['\\\\?\\D:\\lua\\fireBookStore-backend\\firebookstore-dotnet']);
-    writeCodexSession('11111111-1111-4111-8111-111111111111', '小米手环排查', 'D:\\hardware\\mi-band');
-    writeCodexSession('22222222-2222-4222-8222-222222222222', 'Koishi mobile card', 'D:\\cs\\KoishiNavigationWorkArea');
+    const firebook = createWorkspaceFixture('firebook-workspace', ['firebookstore-dotnet']);
+    const koishi = createWorkspaceFixture('koishi-workspace', ['KoishiNavigationWorkArea']);
+    const looseProject = ensureDir(path.join(TEST_WORKSPACES_DIR, 'loose', 'mi-band'));
+    writeCodexSession('11111111-1111-4111-8111-111111111111', 'Mi Band debug', looseProject);
+    writeCodexSession(
+      '22222222-2222-4222-8222-222222222222',
+      'Koishi mobile card',
+      koishi.projects.KoishiNavigationWorkArea,
+      '2026-04-11T00:00:00.000Z',
+      [],
+      koishi.codexHome,
+    );
 
     const store = new JsonFileStore(makeSettings());
     initTestContext(store);
 
-    const bridgeSession = store.createSession('Firebook backend', 'gpt-5', undefined, 'D:\\lua\\fireBookStore-backend\\firebookstore-dotnet');
+    const bridgeSession = store.createSession('Firebook backend', 'gpt-5', undefined, firebook.projects['firebookstore-dotnet']);
     const binding = store.upsertChannelBinding({
       channelType: 'feishu',
       chatId: 'chat-1',
       codepilotSessionId: bridgeSession.id,
-      workingDirectory: 'D:\\lua\\fireBookStore-backend\\firebookstore-dotnet',
+      workingDirectory: firebook.projects['firebookstore-dotnet'],
       model: 'gpt-5',
     });
 
     const allGroups = bridgeTestOnly.buildProjectGroups(binding);
     const workspaces = bridgeTestOnly.buildWorkspaceGroups(binding);
     const koishiCard = bridgeTestOnly.buildFeishuProjectListCard(
-      bridgeTestOnly.buildProjectGroups(binding, 'global', 'D:\\cs\\KoishiNavigationWorkArea'),
+      bridgeTestOnly.buildProjectGroups(binding, 'global', koishi.codexHome),
       binding,
       'global',
-      'D:\\cs\\KoishiNavigationWorkArea',
+      koishi.codexHome,
     );
 
-    assert.equal(allGroups.some((group: any) => group.path === 'D:\\hardware\\mi-band'), true);
-    assert.equal(allGroups.some((group: any) => group.path === 'D:\\cs\\KoishiNavigationWorkArea'), true);
-    assert.equal(workspaces.some((group: any) => group.path === 'D:\\hardware\\mi-band'), false);
-    assert.equal(workspaces.some((group: any) => group.path === 'D:\\cs\\KoishiNavigationWorkArea'), true);
-    assert.equal(workspaces.some((group: any) => group.path === 'D:\\lua\\fireBookStore-backend\\firebookstore-dotnet'), true);
+    assert.equal(allGroups.some((group: any) => group.path === looseProject), true);
+    assert.equal(allGroups.some((group: any) => group.path === koishi.projects.KoishiNavigationWorkArea), true);
+    assert.equal(workspaces.some((group: any) => group.path === TEST_CODEX_HOME), true);
+    assert.equal(workspaces.some((group: any) => group.path === koishi.codexHome), true);
+    assert.equal(workspaces.some((group: any) => group.path === firebook.codexHome), true);
     assert.match(koishiCard, /Workspace/);
-    assert.match(koishiCard, /KoishiNavigationWorkArea/);
+    assert.match(koishiCard, /koishi-workspace/);
     assert.doesNotMatch(koishiCard, /mi-band/);
     assert.match(koishiCard, /nav:workspace:/);
   });
 
-  it('does not invent workspace groups for projects outside saved codex roots', () => {
-    writeCodexWorkspaceState([
-      'D:\\cs',
-    ], ['D:\\cs']);
-
+  it('does not invent workspace groups for projects outside real .codex homes', () => {
     const store = new JsonFileStore(makeSettings());
     initTestContext(store);
 
-    const current = store.createSession('Firebook backend', 'gpt-5', undefined, 'D:\\lua\\fireBookStore-backend\\firebookstore-dotnet');
-    store.createSession('Loose project', 'gpt-5', undefined, 'D:\\hardware\\mi-band');
+    const looseA = ensureDir(path.join(TEST_WORKSPACES_DIR, 'loose-a'));
+    const looseB = ensureDir(path.join(TEST_WORKSPACES_DIR, 'loose-b'));
+    const current = store.createSession('Firebook backend', 'gpt-5', undefined, looseA);
+    store.createSession('Loose project', 'gpt-5', undefined, looseB);
     const binding = store.upsertChannelBinding({
       channelType: 'feishu',
       chatId: 'chat-1',
@@ -254,8 +266,8 @@ describe('Feishu navigation cards', () => {
     });
 
     const workspaces = bridgeTestOnly.buildWorkspaceGroups(binding);
-    assert.equal(workspaces.some((group: any) => group.path === 'D:\\hardware\\mi-band'), false);
-    assert.equal(workspaces.some((group: any) => group.path === 'D:\\lua\\fireBookStore-backend\\firebookstore-dotnet'), false);
+    assert.equal(workspaces.some((group: any) => group.path === looseA), false);
+    assert.equal(workspaces.some((group: any) => group.path === looseB), false);
   });
 
   it('reads native codex message counts and context previews', () => {
@@ -375,23 +387,22 @@ describe('Feishu navigation cards', () => {
   });
 
   it('builds project and session cards with navigation callbacks', () => {
-    writeCodexWorkspaceState([
-      'D:\\projects\\alpha-service',
-    ], ['D:\\projects\\alpha-service']);
+    const workspace = createWorkspaceFixture('card-workspace', ['alpha-service', 'beta-service']);
+    const externalProject = ensureDir(path.join(TEST_WORKSPACES_DIR, 'external', 'gamma-service'));
 
     const store = new JsonFileStore(makeSettings());
     initTestContext(store);
 
-    const alpha = store.createSession('alpha-1', 'gpt-5', undefined, 'D:\\projects\\alpha-service');
-    const alphaFollowup = store.createSession('alpha-2', 'gpt-5', undefined, 'D:\\projects\\alpha-service');
-    const beta = store.createSession('beta-1', 'gpt-5', undefined, 'D:\\projects\\beta-service');
-    store.createSession('gamma-1', 'gpt-5', undefined, 'E:\\other\\gamma-service');
+    const alpha = store.createSession('alpha-1', 'gpt-5', undefined, workspace.projects['alpha-service']);
+    const alphaFollowup = store.createSession('alpha-2', 'gpt-5', undefined, workspace.projects['alpha-service']);
+    const beta = store.createSession('beta-1', 'gpt-5', undefined, workspace.projects['beta-service']);
+    store.createSession('gamma-1', 'gpt-5', undefined, externalProject);
 
     const binding = store.upsertChannelBinding({
       channelType: 'feishu',
       chatId: 'chat-1',
       codepilotSessionId: alphaFollowup.id,
-      workingDirectory: 'D:\\projects\\alpha-service',
+      workingDirectory: workspace.projects['alpha-service'],
       model: 'gpt-5',
     });
 
@@ -423,9 +434,9 @@ describe('Feishu navigation cards', () => {
     assert.match(projectCard, /Open Sessions/);
     assert.match(projectCard, /All|Workspace/);
     assert.match(projectCard, /nav:workspace:|All \*/);
-    assert.equal(workspaceGroups.some((group: any) => group.path === 'D:\\projects\\beta-service'), false);
-    assert.equal(groups.some((group: any) => group.path === 'E:\\other\\gamma-service'), true);
-    assert.equal(workspaceGroups.some((group: any) => group.path === 'E:\\other\\gamma-service'), false);
+    assert.equal(workspaceGroups.some((group: any) => group.path === workspace.projects['beta-service']), true);
+    assert.equal(groups.some((group: any) => group.path === externalProject), true);
+    assert.equal(workspaceGroups.some((group: any) => group.path === externalProject), false);
     assert.match(projectCard, /Current Session/);
     assert.match(projectCard, /alpha-2/);
     assert.match(responseCard, /alpha-service/);
@@ -464,8 +475,8 @@ describe('Feishu navigation cards', () => {
     assert.match(statusCard, /nav:dock:close:/);
     assert.match(statusCard, /2 projects/);
     assert.match(statusCard, /2 unread/);
-    assert.match(statusCard, /alpha-s…\//);
-    assert.match(statusCard, /beta-se…\//);
+    assert.match(statusCard, /alpha-s/);
+    assert.match(statusCard, /beta-se/);
     assert.match(statusCard, new RegExp(dockBinding.codepilotSessionId.slice(0, 8)));
   });
 

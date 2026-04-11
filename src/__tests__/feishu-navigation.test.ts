@@ -141,6 +141,7 @@ describe('Feishu navigation cards', () => {
     const alpha = store.createSession('alpha-1', 'gpt-5', undefined, 'D:\\projects\\alpha-service');
     const alphaFollowup = store.createSession('alpha-2', 'gpt-5', undefined, 'D:\\projects\\alpha-service');
     const beta = store.createSession('beta-1', 'gpt-5', undefined, 'D:\\projects\\beta-service');
+    store.createSession('gamma-1', 'gpt-5', undefined, 'E:\\other\\gamma-service');
 
     const binding = store.upsertChannelBinding({
       channelType: 'feishu',
@@ -165,16 +166,23 @@ describe('Feishu navigation cards', () => {
     } as any);
     const dockBinding = store.getChannelBinding('feishu', 'chat-1')!;
     const groups = bridgeTestOnly.buildProjectGroups(dockBinding);
-    const projectCard = bridgeTestOnly.buildFeishuProjectListCard(groups);
+    const workspaceGroups = bridgeTestOnly.buildProjectGroups(dockBinding, 'workspace');
+    const projectCard = bridgeTestOnly.buildFeishuProjectListCard(groups, dockBinding, 'global');
     const responseCard = bridgeTestOnly.buildFeishuResponseCard(dockBinding, 'pong');
     const replyNavCard = bridgeTestOnly.buildFeishuReplyNavCard(dockBinding);
-    const sessionsCard = bridgeTestOnly.buildFeishuProjectSessionsCard(groups[0], dockBinding.codepilotSessionId);
+    const sessionsCard = bridgeTestOnly.buildFeishuProjectSessionsCard(groups[0], dockBinding.codepilotSessionId, dockBinding);
     const sessionPreviewCard = bridgeTestOnly.buildFeishuSessionPreviewCard(alpha.id, dockBinding.codepilotSessionId);
     const statusCard = bridgeTestOnly.buildFeishuStatusCard(dockBinding);
 
     assert.match(projectCard, /nav:project:/);
     assert.match(projectCard, /Projects/);
-    assert.match(projectCard, /Open|Current/);
+    assert.match(projectCard, /Session Dock/);
+    assert.match(projectCard, /Global Projects/);
+    assert.match(projectCard, /Workspace/);
+    assert.match(projectCard, /Open Sessions|Current Sessions/);
+    assert.equal(workspaceGroups.some((group: any) => group.path === 'D:\\projects\\beta-service'), true);
+    assert.equal(groups.some((group: any) => group.path === 'E:\\other\\gamma-service'), true);
+    assert.equal(workspaceGroups.some((group: any) => group.path === 'E:\\other\\gamma-service'), false);
     assert.match(responseCard, /alpha-service/);
     assert.match(responseCard, /alpha-2/);
     assert.match(responseCard, /pong/);
@@ -183,6 +191,7 @@ describe('Feishu navigation cards', () => {
     assert.match(replyNavCard, /Current Project/);
     assert.match(replyNavCard, /All Projects/);
     assert.match(sessionsCard, /nav:bind:/);
+    assert.match(sessionsCard, /Session Dock/);
     assert.match(sessionsCard, /nav:peek:/);
     assert.match(sessionsCard, /nav:archive:/);
     assert.match(sessionsCard, new RegExp(`"session_id":"${alpha.id}"`));
@@ -290,6 +299,16 @@ describe('Feishu navigation cards', () => {
 
     assert.equal(queued.length, 2);
     assert.equal(queued[1].callbackData, 'nav:dock:select:8dce3400-c58a-4b65-8355-1cce7e1d79bd');
+
+    await adapter.handleCardAction({
+      token: 'token_structured_projects',
+      action: { value: { nav: 'projects', scope: 'workspace' } },
+      context: { open_chat_id: 'chat-1', open_message_id: 'om_card_4' },
+      operator: { open_id: 'ou_user_1' },
+    });
+
+    assert.equal(queued.length, 3);
+    assert.equal(queued[2].callbackData, 'nav:projects:workspace');
   });
 
   it('treats a resolved card patch without code as successful in-place update', async () => {

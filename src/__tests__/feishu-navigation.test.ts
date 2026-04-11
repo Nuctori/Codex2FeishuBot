@@ -177,9 +177,10 @@ describe('Feishu navigation cards', () => {
     assert.match(projectCard, /nav:project:/);
     assert.match(projectCard, /Projects/);
     assert.match(projectCard, /Session Dock/);
-    assert.match(projectCard, /Global Projects/);
     assert.match(projectCard, /Workspace/);
-    assert.match(projectCard, /Open Sessions|Current Sessions/);
+    assert.match(projectCard, /Global/);
+    assert.match(projectCard, /Sessions/);
+    assert.match(projectCard, /D:\\\\projects/);
     assert.equal(workspaceGroups.some((group: any) => group.path === 'D:\\projects\\beta-service'), true);
     assert.equal(groups.some((group: any) => group.path === 'E:\\other\\gamma-service'), true);
     assert.equal(workspaceGroups.some((group: any) => group.path === 'E:\\other\\gamma-service'), false);

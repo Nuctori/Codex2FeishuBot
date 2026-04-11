@@ -27,7 +27,19 @@ const MESSAGES_DIR = path.join(DATA_DIR, 'messages');
 
 type StoredBridgeSession = BridgeSession & {
   name?: string;
+  created_at?: string;
+  updated_at?: string;
   archived_at?: string;
+};
+
+type SessionTimestamps = {
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+type DockBindingState = {
+  openSessionIds?: string[];
+  sessionSeenCounts?: Record<string, number>;
 };
 
 // ── Helpers ──
@@ -61,6 +73,70 @@ function uuid(): string {
 
 function now(): string {
   return new Date().toISOString();
+}
+
+function getSessionSortTime(session: StoredBridgeSession): number {
+  const candidates = [session.updated_at, session.created_at];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    const timestamp = Date.parse(candidate);
+    if (!Number.isNaN(timestamp)) {
+      return timestamp;
+    }
+  }
+  return 0;
+}
+
+function pickEarlierTimestamp(left?: string, right?: string): string | undefined {
+  if (!left) return right;
+  if (!right) return left;
+  const leftTime = Date.parse(left);
+  const rightTime = Date.parse(right);
+  if (Number.isNaN(leftTime)) return right;
+  if (Number.isNaN(rightTime)) return left;
+  return leftTime <= rightTime ? left : right;
+}
+
+function pickLaterTimestamp(left?: string, right?: string): string | undefined {
+  if (!left) return right;
+  if (!right) return left;
+  const leftTime = Date.parse(left);
+  const rightTime = Date.parse(right);
+  if (Number.isNaN(leftTime)) return right;
+  if (Number.isNaN(rightTime)) return left;
+  return leftTime >= rightTime ? left : right;
+}
+
+function getStoredSdkSessionId(session: StoredBridgeSession): string | undefined {
+  const value = (session as unknown as Record<string, unknown>)['sdk_session_id'];
+  return typeof value === 'string' && value.trim() ? value : undefined;
+}
+
+function isWeakSessionName(name: string | undefined, session: StoredBridgeSession): boolean {
+  const trimmed = name?.trim();
+  if (!trimmed) return true;
+  if (trimmed.startsWith('Bridge:')) return true;
+  if (trimmed === session.id) return true;
+  if (trimmed === session.id.slice(0, 8)) return true;
+  if (trimmed === `Session ${session.id.slice(0, 8)}`) return true;
+  const sdkSessionId = getStoredSdkSessionId(session);
+  if (sdkSessionId && trimmed === `Codex ${sdkSessionId.slice(0, 8)}`) return true;
+  return false;
+}
+
+function getDockState(binding: ChannelBinding): DockBindingState {
+  const raw = binding as unknown as DockBindingState;
+  const openSessionIds = Array.isArray(raw.openSessionIds)
+    ? raw.openSessionIds.filter((id): id is string => typeof id === 'string' && id.trim().length > 0)
+    : undefined;
+  const sessionSeenCounts = raw.sessionSeenCounts && typeof raw.sessionSeenCounts === 'object'
+    ? Object.fromEntries(
+        Object.entries(raw.sessionSeenCounts).filter(
+          ([key, value]) => typeof key === 'string' && key.trim().length > 0 && typeof value === 'number' && Number.isFinite(value),
+        ),
+      )
+    : undefined;
+  return { openSessionIds, sessionSeenCounts };
 }
 
 // ── Lock entry ──
@@ -141,6 +217,8 @@ export class JsonFileStore implements BridgeStore {
 
     // Audit
     this.auditLog = readJson(path.join(DATA_DIR, 'audit.json'), []);
+
+    this.normalizeLoadedState();
   }
 
   private persistSessions(): void {
@@ -197,6 +275,233 @@ export class JsonFileStore implements BridgeStore {
     );
     this.messages.set(sessionId, msgs);
     return msgs;
+  }
+
+  private mergeSessionMessages(targetSessionId: string, sourceSessionId: string): void {
+    const target = [...this.loadMessages(targetSessionId)];
+    const source = this.loadMessages(sourceSessionId);
+    if (source.length === 0) return;
+    this.messages.set(targetSessionId, [...source, ...target]);
+    this.persistMessages(targetSessionId);
+  }
+
+  private chooseCanonicalSession(sessions: StoredBridgeSession[]): StoredBridgeSession {
+    const currentBindingSessionIds = new Set(
+      Array.from(this.bindings.values()).map((binding) => binding.codepilotSessionId),
+    );
+    const dockReferenceCounts = new Map<string, number>();
+
+    for (const binding of this.bindings.values()) {
+      const dockState = getDockState(binding);
+      for (const dockSessionId of dockState.openSessionIds ?? []) {
+        dockReferenceCounts.set(dockSessionId, (dockReferenceCounts.get(dockSessionId) ?? 0) + 1);
+      }
+    }
+
+    return [...sessions].sort((left, right) => {
+      const leftBound = currentBindingSessionIds.has(left.id) ? 1 : 0;
+      const rightBound = currentBindingSessionIds.has(right.id) ? 1 : 0;
+      if (leftBound !== rightBound) return rightBound - leftBound;
+
+      const leftDockRefs = dockReferenceCounts.get(left.id) ?? 0;
+      const rightDockRefs = dockReferenceCounts.get(right.id) ?? 0;
+      if (leftDockRefs !== rightDockRefs) return rightDockRefs - leftDockRefs;
+
+      const sortDelta = getSessionSortTime(right) - getSessionSortTime(left);
+      if (sortDelta !== 0) return sortDelta;
+
+      const messageDelta = this.loadMessages(right.id).length - this.loadMessages(left.id).length;
+      if (messageDelta !== 0) return messageDelta;
+
+      return right.id.localeCompare(left.id, 'en');
+    })[0];
+  }
+
+  private mergeDuplicateSession(target: StoredBridgeSession, source: StoredBridgeSession): boolean {
+    if (target.id === source.id) return false;
+
+    this.mergeSessionMessages(target.id, source.id);
+
+    if ((isWeakSessionName(target.name, target) || !target.name) && source.name && !isWeakSessionName(source.name, source)) {
+      target.name = source.name;
+    } else if (!target.name && source.name) {
+      target.name = source.name;
+    }
+
+    if ((!target.system_prompt || !target.system_prompt.trim()) && source.system_prompt) {
+      target.system_prompt = source.system_prompt;
+    }
+    if ((!target.provider_id || !target.provider_id.trim()) && source.provider_id) {
+      target.provider_id = source.provider_id;
+    }
+    if ((!target.model || !target.model.trim()) && source.model) {
+      target.model = source.model;
+    }
+    if ((!target.working_directory || !target.working_directory.trim()) && source.working_directory) {
+      target.working_directory = source.working_directory;
+    }
+
+    const targetSdkSessionId = getStoredSdkSessionId(target);
+    const sourceSdkSessionId = getStoredSdkSessionId(source);
+    if (!targetSdkSessionId && sourceSdkSessionId) {
+      (target as unknown as Record<string, unknown>)['sdk_session_id'] = sourceSdkSessionId;
+    }
+
+    target.created_at = pickEarlierTimestamp(target.created_at, source.created_at);
+    target.updated_at = pickLaterTimestamp(target.updated_at, source.updated_at) || now();
+
+    const archivedAt = now();
+    source.archived_at = archivedAt;
+    source.updated_at = archivedAt;
+
+    return this.rewriteBindingsForMergedSession(target, source);
+  }
+
+  private rewriteBindingsForMergedSession(target: StoredBridgeSession, source: StoredBridgeSession): boolean {
+    let changed = false;
+    const targetSdkSessionId = getStoredSdkSessionId(target) || getStoredSdkSessionId(source) || '';
+
+    for (const [key, binding] of this.bindings) {
+      let nextBinding = binding as ChannelBinding & DockBindingState;
+      let bindingChanged = false;
+
+      if (binding.codepilotSessionId === source.id) {
+        nextBinding = {
+          ...nextBinding,
+          codepilotSessionId: target.id,
+          sdkSessionId: targetSdkSessionId,
+          workingDirectory: target.working_directory,
+          model: target.model,
+          updatedAt: now(),
+        };
+        bindingChanged = true;
+      } else if ((binding.sdkSessionId || '') === targetSdkSessionId && targetSdkSessionId) {
+        if (binding.workingDirectory !== target.working_directory || binding.model !== target.model) {
+          nextBinding = {
+            ...nextBinding,
+            workingDirectory: target.working_directory,
+            model: target.model,
+            updatedAt: now(),
+          };
+          bindingChanged = true;
+        }
+      }
+
+      const dockState = getDockState(nextBinding);
+      const remappedDockIds = dockState.openSessionIds
+        ? Array.from(new Set(dockState.openSessionIds.map((sessionId) => (sessionId === source.id ? target.id : sessionId))))
+        : undefined;
+      const remappedSeenCounts = dockState.sessionSeenCounts
+        ? { ...dockState.sessionSeenCounts }
+        : undefined;
+
+      if (remappedSeenCounts && typeof remappedSeenCounts[source.id] === 'number') {
+        remappedSeenCounts[target.id] = Math.max(remappedSeenCounts[target.id] ?? 0, remappedSeenCounts[source.id] ?? 0);
+        delete remappedSeenCounts[source.id];
+      }
+
+      if (
+        JSON.stringify(remappedDockIds ?? []) !== JSON.stringify(dockState.openSessionIds ?? [])
+        || JSON.stringify(remappedSeenCounts ?? {}) !== JSON.stringify(dockState.sessionSeenCounts ?? {})
+      ) {
+        nextBinding = {
+          ...nextBinding,
+          ...(remappedDockIds ? { openSessionIds: remappedDockIds } : {}),
+          ...(remappedSeenCounts ? { sessionSeenCounts: remappedSeenCounts } : {}),
+          updatedAt: now(),
+        };
+        bindingChanged = true;
+      }
+
+      if (bindingChanged) {
+        this.bindings.set(key, nextBinding);
+        changed = true;
+      }
+    }
+
+    return changed;
+  }
+
+  private repairBindingSessionPointers(): boolean {
+    let changed = false;
+    const activeSessions = Array.from(this.sessions.values()).filter((session) => !session.archived_at);
+
+    for (const [key, binding] of this.bindings) {
+      const current = this.sessions.get(binding.codepilotSessionId);
+      if (current && !current.archived_at) {
+        continue;
+      }
+
+      if (!binding.sdkSessionId) continue;
+      const replacement = activeSessions.find((session) => getStoredSdkSessionId(session) === binding.sdkSessionId);
+      if (!replacement) continue;
+
+      const dockState = getDockState(binding);
+      const nextBinding: ChannelBinding & DockBindingState = {
+        ...binding,
+        codepilotSessionId: replacement.id,
+        sdkSessionId: binding.sdkSessionId,
+        workingDirectory: replacement.working_directory,
+        model: replacement.model,
+        updatedAt: now(),
+        ...(dockState.openSessionIds
+          ? {
+              openSessionIds: Array.from(
+                new Set(dockState.openSessionIds.map((sessionId) => (sessionId === binding.codepilotSessionId ? replacement.id : sessionId))),
+              ),
+            }
+          : {}),
+        ...(dockState.sessionSeenCounts
+          ? {
+              sessionSeenCounts: Object.fromEntries(
+                Object.entries(dockState.sessionSeenCounts).map(([sessionId, seenCount]) => [
+                  sessionId === binding.codepilotSessionId ? replacement.id : sessionId,
+                  seenCount,
+                ]),
+              ),
+            }
+          : {}),
+      };
+
+      this.bindings.set(key, nextBinding);
+      changed = true;
+    }
+
+    return changed;
+  }
+
+  private normalizeLoadedState(): void {
+    let sessionsChanged = false;
+    let bindingsChanged = false;
+    const duplicateGroups = new Map<string, StoredBridgeSession[]>();
+
+    for (const session of this.sessions.values()) {
+      if (session.archived_at) continue;
+      const sdkSessionId = getStoredSdkSessionId(session);
+      if (!sdkSessionId) continue;
+      const group = duplicateGroups.get(sdkSessionId) ?? [];
+      group.push(session);
+      duplicateGroups.set(sdkSessionId, group);
+    }
+
+    for (const group of duplicateGroups.values()) {
+      if (group.length < 2) continue;
+      const canonical = this.chooseCanonicalSession(group);
+      for (const session of group) {
+        if (session.id === canonical.id) continue;
+        bindingsChanged = this.mergeDuplicateSession(canonical, session) || bindingsChanged;
+        sessionsChanged = true;
+      }
+    }
+
+    bindingsChanged = this.repairBindingSessionPointers() || bindingsChanged;
+
+    if (sessionsChanged) {
+      this.persistSessions();
+    }
+    if (bindingsChanged) {
+      this.persistBindings();
+    }
   }
 
   // ── Settings ──
@@ -268,19 +573,31 @@ export class JsonFileStore implements BridgeStore {
     return this.sessions.get(id) ?? null;
   }
 
+  private touchSession(sessionId: string, updatedAt = now()): void {
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+    session.updated_at = updatedAt;
+    this.persistSessions();
+  }
+
   createSession(
     name: string,
     model: string,
     systemPrompt?: string,
     cwd?: string,
     _mode?: string,
+    timestamps?: SessionTimestamps,
   ): BridgeSession {
+    const createdAt = timestamps?.createdAt || now();
+    const updatedAt = timestamps?.updatedAt || createdAt;
     const session: StoredBridgeSession = {
       id: uuid(),
       name,
       working_directory: cwd || this.settings.get('bridge_default_work_dir') || process.cwd(),
       model,
       system_prompt: systemPrompt,
+      created_at: createdAt,
+      updated_at: updatedAt,
     };
     this.sessions.set(session.id, session);
     this.persistSessions();
@@ -291,26 +608,46 @@ export class JsonFileStore implements BridgeStore {
     const session = this.sessions.get(sessionId);
     if (!session) return;
     session.name = name;
+    session.updated_at = now();
+    this.persistSessions();
+  }
+
+  updateSessionMetadata(
+    sessionId: string,
+    updates: Partial<Pick<StoredBridgeSession, 'name' | 'working_directory' | 'model' | 'created_at' | 'updated_at'>>,
+  ): void {
+    const session = this.sessions.get(sessionId);
+    if (!session) return;
+    if (typeof updates.name === 'string') session.name = updates.name;
+    if (typeof updates.working_directory === 'string' && updates.working_directory.trim()) {
+      session.working_directory = updates.working_directory;
+    }
+    if (typeof updates.model === 'string') session.model = updates.model;
+    if (typeof updates.created_at === 'string' && updates.created_at.trim()) session.created_at = updates.created_at;
+    if (typeof updates.updated_at === 'string' && updates.updated_at.trim()) session.updated_at = updates.updated_at;
     this.persistSessions();
   }
 
   archiveSession(sessionId: string): void {
     const session = this.sessions.get(sessionId);
     if (!session) return;
-    session.archived_at = now();
+    const archivedAt = now();
+    session.archived_at = archivedAt;
+    session.updated_at = archivedAt;
     this.persistSessions();
   }
 
   listSessions(): BridgeSession[] {
     return Array.from(this.sessions.values())
       .filter((session) => !session.archived_at)
-      .reverse();
+      .sort((left, right) => getSessionSortTime(right) - getSessionSortTime(left));
   }
 
   updateSessionProviderId(sessionId: string, providerId: string): void {
     const s = this.sessions.get(sessionId);
     if (s) {
       s.provider_id = providerId;
+      s.updated_at = now();
       this.persistSessions();
     }
   }
@@ -321,6 +658,7 @@ export class JsonFileStore implements BridgeStore {
     const msgs = this.loadMessages(sessionId);
     msgs.push({ role, content });
     this.persistMessages(sessionId);
+    this.touchSession(sessionId);
   }
 
   getMessages(sessionId: string, opts?: { limit?: number }): { messages: BridgeMessage[] } {
@@ -369,15 +707,53 @@ export class JsonFileStore implements BridgeStore {
 
   updateSdkSessionId(sessionId: string, sdkSessionId: string): void {
     const s = this.sessions.get(sessionId);
-    if (s) {
-      // Store sdkSessionId on the session object
-      (s as unknown as Record<string, unknown>)['sdk_session_id'] = sdkSessionId;
-      this.persistSessions();
+    if (!s) return;
+
+    const duplicate = Array.from(this.sessions.values()).find((session) => {
+      if (session.id === sessionId || session.archived_at) return false;
+      return (session as unknown as Record<string, unknown>)['sdk_session_id'] === sdkSessionId;
+    }) as StoredBridgeSession | undefined;
+
+    if (duplicate) {
+      this.mergeSessionMessages(sessionId, duplicate.id);
+      if (!s.name && duplicate.name) s.name = duplicate.name;
+      if ((!s.system_prompt || !s.system_prompt.trim()) && duplicate.system_prompt) s.system_prompt = duplicate.system_prompt;
+      if ((!s.provider_id || !s.provider_id.trim()) && duplicate.provider_id) s.provider_id = duplicate.provider_id;
+      if ((!s.model || !s.model.trim()) && duplicate.model) s.model = duplicate.model;
+      s.created_at = pickEarlierTimestamp(s.created_at, duplicate.created_at);
+      s.updated_at = pickLaterTimestamp(s.updated_at, duplicate.updated_at) || now();
+
+      for (const [key, binding] of this.bindings) {
+        if (binding.codepilotSessionId === duplicate.id) {
+          this.bindings.set(key, {
+            ...binding,
+            codepilotSessionId: sessionId,
+            sdkSessionId,
+            workingDirectory: s.working_directory,
+            model: s.model,
+            updatedAt: now(),
+          });
+        }
+      }
+
+      duplicate.archived_at = now();
+      duplicate.updated_at = duplicate.archived_at;
     }
+
+    (s as unknown as Record<string, unknown>)['sdk_session_id'] = sdkSessionId;
+    s.updated_at = pickLaterTimestamp(s.updated_at, now()) || now();
+    this.persistSessions();
+
     // Also update any bindings that reference this session
     for (const [key, b] of this.bindings) {
       if (b.codepilotSessionId === sessionId) {
-        this.bindings.set(key, { ...b, sdkSessionId, updatedAt: now() });
+        this.bindings.set(key, {
+          ...b,
+          sdkSessionId,
+          workingDirectory: s.working_directory,
+          model: s.model,
+          updatedAt: now(),
+        });
       }
     }
     this.persistBindings();
@@ -387,6 +763,7 @@ export class JsonFileStore implements BridgeStore {
     const s = this.sessions.get(sessionId);
     if (s) {
       s.model = model;
+      s.updated_at = now();
       this.persistSessions();
     }
   }

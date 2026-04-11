@@ -122,9 +122,18 @@ describe('Feishu navigation cards', () => {
     const store = new JsonFileStore(makeSettings());
     initTestContext(store);
 
-    const alpha1 = store.createSession('alpha-1', 'gpt-5', undefined, 'D:\\projects\\alpha-service');
-    store.createSession('beta-1', 'gpt-5', undefined, 'D:\\projects\\beta-service');
-    const alpha2 = store.createSession('alpha-2', 'gpt-5', undefined, 'D:\\projects\\alpha-service');
+    const alpha1 = store.createSession('alpha-1', 'gpt-5', undefined, 'D:\\projects\\alpha-service', undefined, {
+      createdAt: '2026-04-11T00:00:00.000Z',
+      updatedAt: '2026-04-11T00:10:00.000Z',
+    });
+    store.createSession('beta-1', 'gpt-5', undefined, 'D:\\projects\\beta-service', undefined, {
+      createdAt: '2026-04-11T00:00:00.000Z',
+      updatedAt: '2026-04-11T00:05:00.000Z',
+    });
+    const alpha2 = store.createSession('alpha-2', 'gpt-5', undefined, 'D:\\projects\\alpha-service', undefined, {
+      createdAt: '2026-04-11T00:00:00.000Z',
+      updatedAt: '2026-04-11T00:20:00.000Z',
+    });
 
     const binding = store.upsertChannelBinding({
       channelType: 'feishu',
@@ -209,21 +218,44 @@ describe('Feishu navigation cards', () => {
     const allGroups = bridgeTestOnly.buildProjectGroups(binding);
     const workspaces = bridgeTestOnly.buildWorkspaceGroups(binding);
     const koishiCard = bridgeTestOnly.buildFeishuProjectListCard(
-      bridgeTestOnly.buildProjectGroups(binding, 'global', 'D:\\cs'),
+      bridgeTestOnly.buildProjectGroups(binding, 'global', 'D:\\cs\\KoishiNavigationWorkArea'),
       binding,
       'global',
-      'D:\\cs',
+      'D:\\cs\\KoishiNavigationWorkArea',
     );
 
     assert.equal(allGroups.some((group: any) => group.path === 'D:\\hardware\\mi-band'), true);
     assert.equal(allGroups.some((group: any) => group.path === 'D:\\cs\\KoishiNavigationWorkArea'), true);
-    assert.equal(workspaces.some((group: any) => group.path === 'D:\\hardware\\mi-band'), true);
+    assert.equal(workspaces.some((group: any) => group.path === 'D:\\hardware\\mi-band'), false);
     assert.equal(workspaces.some((group: any) => group.path === 'D:\\cs\\KoishiNavigationWorkArea'), true);
     assert.equal(workspaces.some((group: any) => group.path === 'D:\\lua\\fireBookStore-backend\\firebookstore-dotnet'), true);
     assert.match(koishiCard, /Workspace/);
     assert.match(koishiCard, /KoishiNavigationWorkArea/);
-    assert.match(koishiCard, /mi-band/);
+    assert.doesNotMatch(koishiCard, /mi-band/);
     assert.match(koishiCard, /nav:workspace:/);
+  });
+
+  it('does not invent workspace groups for projects outside saved codex roots', () => {
+    writeCodexWorkspaceState([
+      'D:\\cs',
+    ], ['D:\\cs']);
+
+    const store = new JsonFileStore(makeSettings());
+    initTestContext(store);
+
+    const current = store.createSession('Firebook backend', 'gpt-5', undefined, 'D:\\lua\\fireBookStore-backend\\firebookstore-dotnet');
+    store.createSession('Loose project', 'gpt-5', undefined, 'D:\\hardware\\mi-band');
+    const binding = store.upsertChannelBinding({
+      channelType: 'feishu',
+      chatId: 'chat-1',
+      codepilotSessionId: current.id,
+      workingDirectory: current.working_directory,
+      model: 'gpt-5',
+    });
+
+    const workspaces = bridgeTestOnly.buildWorkspaceGroups(binding);
+    assert.equal(workspaces.some((group: any) => group.path === 'D:\\hardware\\mi-band'), false);
+    assert.equal(workspaces.some((group: any) => group.path === 'D:\\lua\\fireBookStore-backend\\firebookstore-dotnet'), false);
   });
 
   it('reads native codex message counts and context previews', () => {
@@ -258,12 +290,95 @@ describe('Feishu navigation cards', () => {
     const previewCard = bridgeTestOnly.buildFeishuSessionPreviewCard('44444444-4444-4444-8444-444444444444', binding.codepilotSessionId);
 
     assert.match(sessionsCard, /3 msgs/);
+    assert.match(sessionsCard, /Created 2026-04-11/);
+    assert.match(sessionsCard, /Updated 2026-04-11/);
     assert.ok(previewCard);
     assert.match(previewCard!, /first native question/);
     assert.match(previewCard!, /first native answer/);
   });
 
+  it('prefers native codex metadata for mirrored current sessions', () => {
+    writeCodexSession(
+      '019d78cc-9b78-7cc0-ba7c-6deeb2a409bf',
+      'Firebook current thread',
+      'D:/lua/fireBookStore-backend/firebookstore-dotnet',
+      '2026-04-11T10:00:00.000Z',
+      [
+        { role: 'user', content: 'continue firebook work' },
+        { role: 'assistant', content: 'working in firebook repo' },
+      ],
+    );
+
+    const store = new JsonFileStore(makeSettings());
+    initTestContext(store);
+
+    const mirrored = store.createSession('old koishi title', '', undefined, 'D:\\cs\\KoishiNavigationWorkArea');
+    store.updateSdkSessionId(mirrored.id, '019d78cc-9b78-7cc0-ba7c-6deeb2a409bf');
+
+    const binding = store.upsertChannelBinding({
+      channelType: 'feishu',
+      chatId: 'chat-1',
+      codepilotSessionId: mirrored.id,
+      sdkSessionId: '019d78cc-9b78-7cc0-ba7c-6deeb2a409bf',
+      workingDirectory: 'D:\\cs\\KoishiNavigationWorkArea',
+      model: '',
+    });
+
+    const statusCard = bridgeTestOnly.buildFeishuStatusCard(binding);
+    const projectCard = bridgeTestOnly.buildFeishuProjectListCard(bridgeTestOnly.buildProjectGroups(binding), binding, 'global');
+    const refreshedBinding = store.getChannelBinding('feishu', 'chat-1')!;
+
+    assert.match(statusCard, /firebookstore-dotnet|continue firebook work/);
+    assert.match(statusCard, /firebookstore-dotnet/);
+    assert.doesNotMatch(statusCard, /KoishiNavigationWorkArea/);
+    assert.match(projectCard, /firebookstore-dotnet/);
+    assert.equal(refreshedBinding.workingDirectory, 'D:\\lua\\fireBookStore-backend\\firebookstore-dotnet');
+  });
+
+  it('deduplicates multiple bridge mirrors that point to the same native codex session', () => {
+    writeCodexSession(
+      '019d78cc-9b78-7cc0-ba7c-6deeb2a409bf',
+      'Firebook current thread',
+      'D:/lua/fireBookStore-backend/firebookstore-dotnet',
+      '2026-04-11T10:00:00.000Z',
+      [
+        { role: 'user', content: 'continue firebook work' },
+        { role: 'assistant', content: 'working in firebook repo' },
+      ],
+    );
+
+    const store = new JsonFileStore(makeSettings());
+    initTestContext(store);
+
+    const olderMirror = store.createSession('Codex 019d78cc', '', undefined, 'D:\\lua\\fireBookStore-backend\\firebookstore-dotnet');
+    store.updateSdkSessionId(olderMirror.id, '019d78cc-9b78-7cc0-ba7c-6deeb2a409bf');
+    store.addMessage(olderMirror.id, 'user', 'older local context');
+    store.addMessage(olderMirror.id, 'assistant', 'older local answer');
+
+    const currentMirror = store.createSession('Codex 019d78cc', '', undefined, 'D:\\lua\\fireBookStore-backend\\firebookstore-dotnet');
+    store.updateSdkSessionId(currentMirror.id, '019d78cc-9b78-7cc0-ba7c-6deeb2a409bf');
+
+    const binding = store.upsertChannelBinding({
+      channelType: 'feishu',
+      chatId: 'chat-1',
+      codepilotSessionId: currentMirror.id,
+      sdkSessionId: '019d78cc-9b78-7cc0-ba7c-6deeb2a409bf',
+      workingDirectory: 'D:\\lua\\fireBookStore-backend\\firebookstore-dotnet',
+      model: '',
+    });
+
+    const groups = bridgeTestOnly.buildProjectGroups(binding);
+    const firebook = groups.find((group: any) => group.path === 'D:\\lua\\fireBookStore-backend\\firebookstore-dotnet');
+    assert.ok(firebook);
+    assert.equal(firebook.sessions.length, 1);
+    assert.equal(firebook.sessions[0].id, currentMirror.id);
+  });
+
   it('builds project and session cards with navigation callbacks', () => {
+    writeCodexWorkspaceState([
+      'D:\\projects\\alpha-service',
+    ], ['D:\\projects\\alpha-service']);
+
     const store = new JsonFileStore(makeSettings());
     initTestContext(store);
 
@@ -311,11 +426,18 @@ describe('Feishu navigation cards', () => {
     assert.equal(workspaceGroups.some((group: any) => group.path === 'D:\\projects\\beta-service'), false);
     assert.equal(groups.some((group: any) => group.path === 'E:\\other\\gamma-service'), true);
     assert.equal(workspaceGroups.some((group: any) => group.path === 'E:\\other\\gamma-service'), false);
+    assert.match(projectCard, /Current Session/);
+    assert.match(projectCard, /alpha-2/);
     assert.match(responseCard, /alpha-service/);
     assert.match(responseCard, /alpha-2/);
     assert.match(responseCard, /pong/);
+    assert.match(responseCard, /Current Session/);
+    assert.match(responseCard, /nav:peek:/);
     assert.match(responseCard, /Sessions/);
     assert.doesNotMatch(responseCard, /Projects/);
+    assert.match(replyNavCard, /Current Session/);
+    assert.match(replyNavCard, /alpha-2/);
+    assert.match(replyNavCard, /nav:peek:/);
     assert.match(replyNavCard, /Current Project/);
     assert.match(replyNavCard, /All Projects/);
     assert.match(sessionsCard, /nav:bind:/);
@@ -324,6 +446,9 @@ describe('Feishu navigation cards', () => {
     assert.match(sessionsCard, /projects|nav:workspace:/);
     assert.match(sessionsCard, /nav:peek:/);
     assert.match(sessionsCard, /nav:archive:/);
+    assert.match(sessionsCard, /"content":"New"/);
+    assert.match(sessionsCard, /"content":"Status"/);
+    assert.doesNotMatch(sessionsCard, /Current Session/);
     assert.match(sessionsCard, new RegExp(`"session_id":"${alpha.id}"`));
     assert.match(sessionsCard, /Use|Current/);
     assert.match(sessionsCard, /msg/);
@@ -342,6 +467,49 @@ describe('Feishu navigation cards', () => {
     assert.match(statusCard, /alpha-s…\//);
     assert.match(statusCard, /beta-se…\//);
     assert.match(statusCard, new RegExp(dockBinding.codepilotSessionId.slice(0, 8)));
+  });
+
+  it('shows five project sessions per page with pager controls and no duplicate current panel', () => {
+    const store = new JsonFileStore(makeSettings());
+    initTestContext(store);
+
+    const sessionIds: string[] = [];
+    for (let index = 1; index <= 7; index++) {
+      const minute = String(index).padStart(2, '0');
+      const session = store.createSession(`alpha-${index}`, 'gpt-5', undefined, 'D:\\projects\\alpha-service', undefined, {
+        createdAt: `2026-04-11T00:${minute}:00.000Z`,
+        updatedAt: `2026-04-11T01:${minute}:00.000Z`,
+      });
+      sessionIds.push(session.id);
+    }
+
+    const binding = store.upsertChannelBinding({
+      channelType: 'feishu',
+      chatId: 'chat-1',
+      codepilotSessionId: sessionIds.at(-1)!,
+      workingDirectory: 'D:\\projects\\alpha-service',
+      model: 'gpt-5',
+    });
+
+    const group = bridgeTestOnly.buildProjectGroups(binding)[0];
+    assert.ok(group);
+
+    const page0 = bridgeTestOnly.buildFeishuProjectSessionsCard(group, binding.codepilotSessionId, binding, 'workspace', undefined, 0);
+    const page1 = bridgeTestOnly.buildFeishuProjectSessionsCard(group, binding.codepilotSessionId, binding, 'workspace', undefined, 1);
+
+    assert.equal((page0.match(/nav:bind:/g) || []).length, 5);
+    assert.equal((page1.match(/nav:bind:/g) || []).length, 2);
+    assert.match(page0, /1\/2/);
+    assert.match(page1, /2\/2/);
+    assert.match(page0, /nav:project:.*:1/);
+    assert.match(page1, /"content":"Newer"/);
+    assert.match(page0, /alpha-7/);
+    assert.match(page0, /alpha-3/);
+    assert.doesNotMatch(page0, /alpha-2/);
+    assert.match(page1, /alpha-2/);
+    assert.match(page1, /alpha-1/);
+    assert.match(page0, /"content":"New"/);
+    assert.doesNotMatch(page0, /Current Session/);
   });
 
   it('supports paged context previews with total counts and pager callbacks', () => {
@@ -449,6 +617,32 @@ describe('Feishu navigation cards', () => {
 
     assert.equal(queued.length, 4);
     assert.equal(queued[3].callbackData, `nav:workspace:${Buffer.from('D:\\cs', 'utf8').toString('base64url')}`);
+
+    await adapter.handleCardAction({
+      token: 'token_structured_project_page',
+      action: { value: { nav: 'project', project_path: 'D:\\projects\\alpha-service', workspace_path: 'D:\\projects', page: 2 } },
+      context: { open_chat_id: 'chat-1', open_message_id: 'om_card_6' },
+      operator: { open_id: 'ou_user_1' },
+    });
+
+    assert.equal(queued.length, 5);
+    assert.equal(
+      queued[4].callbackData,
+      `nav:project:${Buffer.from('D:\\projects\\alpha-service', 'utf8').toString('base64url')}:${Buffer.from('D:\\projects', 'utf8').toString('base64url')}:2`,
+    );
+
+    await adapter.handleCardAction({
+      token: 'token_structured_project_new',
+      action: { value: { nav: 'project_new', project_path: 'D:\\projects\\alpha-service', workspace_path: 'D:\\projects' } },
+      context: { open_chat_id: 'chat-1', open_message_id: 'om_card_7' },
+      operator: { open_id: 'ou_user_1' },
+    });
+
+    assert.equal(queued.length, 6);
+    assert.equal(
+      queued[5].callbackData,
+      `nav:new:${Buffer.from('D:\\projects\\alpha-service', 'utf8').toString('base64url')}:${Buffer.from('D:\\projects', 'utf8').toString('base64url')}`,
+    );
   });
 
   it('treats a resolved card patch without code as successful in-place update', async () => {
@@ -702,6 +896,111 @@ describe('Feishu navigation cards', () => {
     assert.deepEqual(acked, [1, 1, 1, 1, 1, 1, 1, 1]);
   });
 
+  it('creates and binds a new session from the project card', async () => {
+    const store = new JsonFileStore(makeSettings());
+    initTestContext(store);
+
+    const existing = store.createSession('Existing alpha session', 'gpt-5', undefined, 'D:\\projects\\alpha-service');
+    const other = store.createSession('Beta session', 'gpt-5', undefined, 'D:\\projects\\beta-service');
+    store.upsertChannelBinding({
+      channelType: 'feishu',
+      chatId: 'chat-1',
+      codepilotSessionId: other.id,
+      workingDirectory: 'D:\\projects\\beta-service',
+      model: 'gpt-5',
+      mode: 'code',
+    });
+
+    const sends: Array<{
+      text: string;
+      parseMode?: string;
+      updateMessageId?: string;
+    }> = [];
+    const fakeAdapter = {
+      channelType: 'feishu',
+      async send(message: {
+        text: string;
+        parseMode?: string;
+        updateMessageId?: string;
+      }) {
+        sends.push(message);
+        return { ok: true, messageId: message.updateMessageId || `msg_${sends.length}` };
+      },
+      acknowledgeUpdate() {},
+    } as any;
+
+    await bridgeTestOnly.handleMessage(
+      fakeAdapter,
+      makeNavCallbackMessage(
+        `nav:new:${bridgeTestOnly.encodeCardToken('D:\\projects\\alpha-service')}`,
+        'om_project_new_alpha',
+      ),
+    );
+
+    const rebound = store.getChannelBinding('feishu', 'chat-1');
+    assert.ok(rebound);
+    assert.equal(rebound!.workingDirectory, 'D:\\projects\\alpha-service');
+    assert.notEqual(rebound!.codepilotSessionId, other.id);
+    assert.notEqual(rebound!.codepilotSessionId, existing.id);
+    assert.equal(sends.at(-1)?.parseMode, 'CardJson');
+    assert.equal(sends.at(-1)?.updateMessageId, 'om_project_new_alpha');
+    assert.match(sends.at(-1)!.text, /Open Sessions/);
+    assert.match(sends.at(-1)!.text, /alpha-service/);
+    assert.match(sends.at(-1)!.text, new RegExp(rebound!.codepilotSessionId.slice(0, 8)));
+    assert.doesNotMatch(sends.at(-1)!.text, /Current Session/);
+  });
+
+  it('falls back to project text instead of claiming missing project when a card update fails', async () => {
+    const store = new JsonFileStore(makeSettings());
+    initTestContext(store);
+
+    const alpha1 = store.createSession('Investigate payment timeout', 'gpt-5', undefined, 'D:\\projects\\alpha-service');
+    const alpha2 = store.createSession('Continue deploy audit', 'gpt-5', undefined, 'D:\\projects\\alpha-service');
+    store.upsertChannelBinding({
+      channelType: 'feishu',
+      chatId: 'chat-1',
+      codepilotSessionId: alpha2.id,
+      workingDirectory: 'D:\\projects\\alpha-service',
+      model: 'gpt-5',
+      mode: 'code',
+    });
+
+    const sends: Array<{
+      text: string;
+      parseMode?: string;
+      updateMessageId?: string;
+      replyToMessageId?: string;
+    }> = [];
+    const fakeAdapter = {
+      channelType: 'feishu',
+      async send(message: {
+        text: string;
+        parseMode?: string;
+        updateMessageId?: string;
+        replyToMessageId?: string;
+      }) {
+        sends.push(message);
+        if (message.parseMode === 'CardJson' && message.updateMessageId === 'om_project_alpha') {
+          return { ok: false, error: 'rate limited' };
+        }
+        return { ok: true, messageId: message.updateMessageId || `msg_${sends.length}` };
+      },
+      acknowledgeUpdate() {},
+    } as any;
+
+    await bridgeTestOnly.handleMessage(
+      fakeAdapter,
+      makeNavCallbackMessage(`nav:project:${bridgeTestOnly.encodeCardToken('D:\\projects\\alpha-service')}`, 'om_project_alpha'),
+    );
+
+    assert.equal(sends[0]?.parseMode, 'CardJson');
+    const htmlFallback = [...sends].reverse().find((item) => item.parseMode === 'HTML');
+    assert.ok(htmlFallback);
+    assert.match(htmlFallback!.text, /alpha-service/);
+    assert.match(htmlFallback!.text, /Projects/);
+    assert.doesNotMatch(htmlFallback!.text, /Project not found/);
+  });
+
   it('binds a discovered codex session by creating a bridge mirror with sdk session id', async () => {
     writeCodexSession(
       '33333333-3333-4333-8333-333333333333',
@@ -749,6 +1048,61 @@ describe('Feishu navigation cards', () => {
     assert.equal(sends.at(-1)?.updateMessageId, 'om_bind_codex');
     assert.match(sends.at(-1)!.text, /Current Session/);
     assert.match(sends.at(-1)!.text, /mi-band/);
+  });
+
+  it('bind command accepts a discovered codex session id by creating a bridge mirror', async () => {
+    writeCodexSession(
+      '019d56b8-6a5a-79d1-a1a2-0bacb6f0a304',
+      'Review Claude-to-IM-skill Feishu use',
+      'D:\\lua\\fireBookStore-backend\\firebookstore-dotnet',
+    );
+
+    const store = new JsonFileStore(makeSettings());
+    initTestContext(store);
+
+    const current = store.createSession('Bridge current', 'gpt-5', undefined, 'D:\\projects\\alpha-service');
+    store.upsertChannelBinding({
+      channelType: 'feishu',
+      chatId: 'chat-1',
+      codepilotSessionId: current.id,
+      workingDirectory: current.working_directory,
+      model: 'gpt-5',
+      mode: 'code',
+    });
+
+    const sends: Array<{ text: string; parseMode?: string }> = [];
+    const fakeAdapter = {
+      channelType: 'feishu',
+      async send(message: { text: string; parseMode?: string }) {
+        sends.push(message);
+        return { ok: true, messageId: `msg_${sends.length}` };
+      },
+      acknowledgeUpdate() {},
+    } as any;
+
+    await bridgeTestOnly.handleMessage(fakeAdapter, {
+      messageId: 'evt_bind_1',
+      timestamp: Date.now(),
+      text: '/bind 019d56b8-6a5a-79d1-a1a2-0bacb6f0a304',
+      address: {
+        channelType: 'feishu',
+        chatId: 'chat-1',
+        userId: 'ou_user_1',
+        displayName: 'Tester',
+      },
+    });
+
+    const rebound = store.getChannelBinding('feishu', 'chat-1');
+    assert.ok(rebound);
+    assert.notEqual(rebound!.codepilotSessionId, '019d56b8-6a5a-79d1-a1a2-0bacb6f0a304');
+    assert.equal(rebound!.sdkSessionId, '019d56b8-6a5a-79d1-a1a2-0bacb6f0a304');
+    assert.equal(rebound!.workingDirectory, 'D:\\lua\\fireBookStore-backend\\firebookstore-dotnet');
+
+    const mirrored = store.getSession(rebound!.codepilotSessionId) as any;
+    assert.equal(mirrored?.sdk_session_id, '019d56b8-6a5a-79d1-a1a2-0bacb6f0a304');
+    assert.equal(mirrored?.name, 'Review Claude-to-IM-skill Feishu use');
+    assert.equal(sends.at(-1)?.parseMode, 'CardJson');
+    assert.match(sends.at(-1)!.text, /Current Session/);
   });
 
   it('does not send a second reply card after a streaming card finalized', async () => {

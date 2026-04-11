@@ -38,17 +38,25 @@ describe('JsonFileStore', () => {
     assert.equal(session.model, 'model-1');
     assert.equal(session.working_directory, '/tmp');
     assert.equal(session.system_prompt, 'system prompt');
+    assert.ok((session as { created_at?: string }).created_at);
+    assert.ok((session as { updated_at?: string }).updated_at);
 
     const fetched = store.getSession(session.id);
     assert.deepEqual(fetched, session);
   });
 
-  it('listSessions returns newest sessions first with names preserved', () => {
+  it('listSessions returns latest-updated sessions first with names preserved', () => {
     const store = new JsonFileStore(makeSettings()) as JsonFileStore & {
       listSessions(): Array<{ id: string; name?: string }>;
     };
-    const first = store.createSession('first', 'model-1', undefined, '/tmp/one');
-    const second = store.createSession('second', 'model-2', undefined, '/tmp/two');
+    const first = store.createSession('first', 'model-1', undefined, '/tmp/one', undefined, {
+      createdAt: '2026-04-11T01:00:00.000Z',
+      updatedAt: '2026-04-11T01:00:00.000Z',
+    });
+    const second = store.createSession('second', 'model-2', undefined, '/tmp/two', undefined, {
+      createdAt: '2026-04-11T00:00:00.000Z',
+      updatedAt: '2026-04-11T03:00:00.000Z',
+    });
 
     const sessions = store.listSessions() as Array<{ id: string; name?: string }>;
     assert.equal(sessions.length, 2);
@@ -56,6 +64,20 @@ describe('JsonFileStore', () => {
     assert.equal(sessions[0].name, 'second');
     assert.equal(sessions[1].id, first.id);
     assert.equal(sessions[1].name, 'first');
+  });
+
+  it('addMessage bumps the session updated time', () => {
+    const store = new JsonFileStore(makeSettings());
+    const session = store.createSession('test', 'model', undefined, '/tmp', undefined, {
+      createdAt: '2026-04-11T00:00:00.000Z',
+      updatedAt: '2026-04-11T00:00:00.000Z',
+    });
+
+    store.addMessage(session.id, 'user', 'hello');
+
+    const updated = store.getSession(session.id) as { updated_at?: string };
+    assert.ok(updated.updated_at);
+    assert.notEqual(updated.updated_at, '2026-04-11T00:00:00.000Z');
   });
 
   it('updateSessionName persists renamed sessions', () => {
@@ -346,6 +368,113 @@ describe('JsonFileStore', () => {
     store.updateSdkSessionId(session.id, 'sdk-123');
     const binding = store.getChannelBinding('telegram', '1');
     assert.equal(binding?.sdkSessionId, 'sdk-123');
+  });
+
+  it('updateSdkSessionId merges duplicate mirror sessions for the same sdk session', () => {
+    const store = new JsonFileStore(makeSettings());
+    const older = store.createSession('older', 'model', undefined, '/tmp/old');
+    store.addMessage(older.id, 'user', 'old user');
+    store.addMessage(older.id, 'assistant', 'old assistant');
+    store.updateSdkSessionId(older.id, 'sdk-dup');
+
+    const current = store.createSession('current', 'model', undefined, '/tmp/new');
+    store.addMessage(current.id, 'user', 'new user');
+    store.upsertChannelBinding({
+      channelType: 'telegram',
+      chatId: '1',
+      codepilotSessionId: older.id,
+      workingDirectory: '/tmp/old',
+      model: 'model',
+    });
+
+    store.updateSdkSessionId(current.id, 'sdk-dup');
+
+    const binding = store.getChannelBinding('telegram', '1');
+    const currentMessages = store.getMessages(current.id).messages;
+    const olderSession = store.getSession(older.id) as { archived_at?: string } | null;
+
+    assert.equal(binding?.codepilotSessionId, current.id);
+    assert.equal(binding?.sdkSessionId, 'sdk-dup');
+    assert.equal(currentMessages.length, 3);
+    assert.equal(currentMessages[0]?.content, 'old user');
+    assert.equal(currentMessages[2]?.content, 'new user');
+    assert.ok(olderSession?.archived_at);
+  });
+
+  it('loadAll normalizes existing duplicate sdk mirrors and rewrites dock state', () => {
+    const messagesDir = path.join(DATA_DIR, 'messages');
+    fs.mkdirSync(messagesDir, { recursive: true });
+
+    const duplicateA = '8dce3400-c58a-4b65-8355-1cce7e1d79bd';
+    const duplicateB = 'feee8fb4-ed8f-42b8-912d-dd680e5aac9f';
+    const sdkSessionId = '019d78cc-9b78-7cc0-ba7c-6deeb2a409bf';
+    const sessions = {
+      [duplicateA]: {
+        id: duplicateA,
+        name: 'Codex 019d78cc',
+        working_directory: '/tmp/firebook',
+        model: '',
+        sdk_session_id: sdkSessionId,
+        created_at: '2026-04-10T19:09:28.325Z',
+        updated_at: '2026-04-10T19:09:28.325Z',
+      },
+      [duplicateB]: {
+        id: duplicateB,
+        name: 'Firebook backend investigation',
+        working_directory: '/tmp/firebook',
+        model: '',
+        sdk_session_id: sdkSessionId,
+        created_at: '2026-04-10T19:09:28.325Z',
+        updated_at: '2026-04-11T10:00:00.000Z',
+      },
+    };
+    const bindings = {
+      'feishu:chat-1': {
+        id: 'binding-1',
+        channelType: 'feishu',
+        chatId: 'chat-1',
+        codepilotSessionId: duplicateB,
+        sdkSessionId,
+        workingDirectory: '/tmp/firebook',
+        model: '',
+        mode: 'code',
+        active: true,
+        createdAt: '2026-04-10T00:00:00.000Z',
+        updatedAt: '2026-04-11T00:00:00.000Z',
+        openSessionIds: [duplicateB, duplicateA],
+        sessionSeenCounts: {
+          [duplicateB]: 2,
+          [duplicateA]: 7,
+        },
+      },
+    };
+
+    fs.writeFileSync(path.join(DATA_DIR, 'sessions.json'), JSON.stringify(sessions, null, 2), 'utf-8');
+    fs.writeFileSync(path.join(DATA_DIR, 'bindings.json'), JSON.stringify(bindings, null, 2), 'utf-8');
+    fs.writeFileSync(
+      path.join(messagesDir, `${duplicateA}.json`),
+      JSON.stringify([{ role: 'user', content: 'old user' }], null, 2),
+      'utf-8',
+    );
+    fs.writeFileSync(
+      path.join(messagesDir, `${duplicateB}.json`),
+      JSON.stringify([{ role: 'assistant', content: 'new assistant' }], null, 2),
+      'utf-8',
+    );
+
+    const store = new JsonFileStore(makeSettings());
+    const migratedBinding = store.getChannelBinding('feishu', 'chat-1') as typeof bindings['feishu:chat-1'] | null;
+    const archived = store.getSession(duplicateA) as { archived_at?: string } | null;
+    const messages = store.getMessages(duplicateB).messages;
+
+    assert.equal(migratedBinding?.codepilotSessionId, duplicateB);
+    assert.deepEqual(migratedBinding?.openSessionIds, [duplicateB]);
+    assert.equal(migratedBinding?.sessionSeenCounts?.[duplicateB], 7);
+    assert.equal(messages.length, 2);
+    assert.equal(messages[0]?.content, 'old user');
+    assert.equal(messages[1]?.content, 'new assistant');
+    assert.equal((store.getSession(duplicateB) as { name?: string } | null)?.name, 'Firebook backend investigation');
+    assert.ok(archived?.archived_at);
   });
 
   it('updateSessionModel updates model', () => {

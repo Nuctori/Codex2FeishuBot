@@ -140,6 +140,7 @@ describe('Feishu navigation cards', () => {
 
     const alpha = store.createSession('alpha-1', 'gpt-5', undefined, 'D:\\projects\\alpha-service');
     const alphaFollowup = store.createSession('alpha-2', 'gpt-5', undefined, 'D:\\projects\\alpha-service');
+    const beta = store.createSession('beta-1', 'gpt-5', undefined, 'D:\\projects\\beta-service');
 
     const binding = store.upsertChannelBinding({
       channelType: 'feishu',
@@ -152,14 +153,24 @@ describe('Feishu navigation cards', () => {
     store.addMessage(alpha.id, 'user', 'please inspect the payment timeout');
     store.addMessage(alpha.id, 'assistant', 'I checked the last deploy and found a null config value.');
     store.addMessage(alphaFollowup.id, 'user', 'continue the current deployment investigation');
+    store.addMessage(beta.id, 'assistant', 'beta project background result');
 
-    const groups = bridgeTestOnly.buildProjectGroups(binding);
+    store.updateChannelBinding(binding.id, {
+      openSessionIds: [alphaFollowup.id, alpha.id, beta.id],
+      sessionSeenCounts: {
+        [alphaFollowup.id]: 1,
+        [alpha.id]: 1,
+        [beta.id]: 0,
+      },
+    } as any);
+    const dockBinding = store.getChannelBinding('feishu', 'chat-1')!;
+    const groups = bridgeTestOnly.buildProjectGroups(dockBinding);
     const projectCard = bridgeTestOnly.buildFeishuProjectListCard(groups);
-    const responseCard = bridgeTestOnly.buildFeishuResponseCard(binding, 'pong');
-    const replyNavCard = bridgeTestOnly.buildFeishuReplyNavCard(binding);
-    const sessionsCard = bridgeTestOnly.buildFeishuProjectSessionsCard(groups[0], binding.codepilotSessionId);
-    const sessionPreviewCard = bridgeTestOnly.buildFeishuSessionPreviewCard(alpha.id, binding.codepilotSessionId);
-    const statusCard = bridgeTestOnly.buildFeishuStatusCard(binding);
+    const responseCard = bridgeTestOnly.buildFeishuResponseCard(dockBinding, 'pong');
+    const replyNavCard = bridgeTestOnly.buildFeishuReplyNavCard(dockBinding);
+    const sessionsCard = bridgeTestOnly.buildFeishuProjectSessionsCard(groups[0], dockBinding.codepilotSessionId);
+    const sessionPreviewCard = bridgeTestOnly.buildFeishuSessionPreviewCard(alpha.id, dockBinding.codepilotSessionId);
+    const statusCard = bridgeTestOnly.buildFeishuStatusCard(dockBinding);
 
     assert.match(projectCard, /nav:project:/);
     assert.match(projectCard, /Projects/);
@@ -184,7 +195,14 @@ describe('Feishu navigation cards', () => {
     assert.match(sessionPreviewCard!, /2 msgs/);
     assert.match(statusCard, /nav:projects/);
     assert.match(statusCard, /collapsible_panel/);
-    assert.match(statusCard, new RegExp(binding.codepilotSessionId.slice(0, 8)));
+    assert.match(statusCard, /Session Dock/);
+    assert.match(statusCard, /nav:dock:select:/);
+    assert.match(statusCard, /nav:dock:close:/);
+    assert.match(statusCard, /2 projects/);
+    assert.match(statusCard, /2 unread/);
+    assert.match(statusCard, /alpha-s…\//);
+    assert.match(statusCard, /beta-se…\//);
+    assert.match(statusCard, new RegExp(dockBinding.codepilotSessionId.slice(0, 8)));
   });
 
   it('supports paged context previews with total counts and pager callbacks', () => {
@@ -262,6 +280,16 @@ describe('Feishu navigation cards', () => {
 
     assert.equal(queued.length, 1);
     assert.equal(queued[0].callbackData, 'nav:bind:8dce3400-c58a-4b65-8355-1cce7e1d79bd');
+
+    await adapter.handleCardAction({
+      token: 'token_structured_dock',
+      action: { value: { nav: 'dock_select', session_id: '8dce3400-c58a-4b65-8355-1cce7e1d79bd' } },
+      context: { open_chat_id: 'chat-1', open_message_id: 'om_card_3' },
+      operator: { open_id: 'ou_user_1' },
+    });
+
+    assert.equal(queued.length, 2);
+    assert.equal(queued[1].callbackData, 'nav:dock:select:8dce3400-c58a-4b65-8355-1cce7e1d79bd');
   });
 
   it('treats a resolved card patch without code as successful in-place update', async () => {
@@ -471,6 +499,29 @@ describe('Feishu navigation cards', () => {
     assert.match(sends.at(-1)!.text, /Current Session/);
     assert.match(sends.at(-1)!.text, new RegExp(alpha1.id.slice(0, 8)));
 
+    store.updateChannelBinding(rebound!.id, {
+      openSessionIds: [alpha1.id, beta1.id],
+      sessionSeenCounts: {
+        [alpha1.id]: 2,
+        [beta1.id]: 0,
+      },
+    } as any);
+
+    const dockSelectMsg = makeNavCallbackMessage(`nav:dock:select:${beta1.id}`, 'om_dock_select_beta1');
+    await bridgeTestOnly.handleMessage(fakeAdapter, dockSelectMsg);
+    const dockSelected = store.getChannelBinding('feishu', 'chat-1');
+    assert.equal(dockSelected?.codepilotSessionId, beta1.id);
+    assert.equal(sends.at(-1)?.updateMessageId, 'om_dock_select_beta1');
+    assert.match(sends.at(-1)!.text, /Session Dock/);
+    assert.match(sends.at(-1)!.text, new RegExp(beta1.id.slice(0, 8)));
+
+    const dockCloseMsg = makeNavCallbackMessage(`nav:dock:close:${beta1.id}`, 'om_dock_close_beta1');
+    await bridgeTestOnly.handleMessage(fakeAdapter, dockCloseMsg);
+    const dockClosed = store.getChannelBinding('feishu', 'chat-1');
+    assert.equal(dockClosed?.codepilotSessionId, alpha1.id);
+    assert.equal(sends.at(-1)?.updateMessageId, 'om_dock_close_beta1');
+    assert.match(sends.at(-1)!.text, new RegExp(alpha1.id.slice(0, 8)));
+
     const archiveCurrentMsg = makeNavCallbackMessage(`nav:archive:${alpha1.id}`, 'om_archive_alpha1');
     await bridgeTestOnly.handleMessage(fakeAdapter, archiveCurrentMsg);
     const afterArchiveBinding = store.getChannelBinding('feishu', 'chat-1');
@@ -489,7 +540,7 @@ describe('Feishu navigation cards', () => {
     assert.match(sends.at(-1)!.text, /Current Session/);
     assert.match(sends.at(-1)!.text, /alpha-service/);
 
-    assert.deepEqual(acked, [1, 1, 1, 1, 1, 1]);
+    assert.deepEqual(acked, [1, 1, 1, 1, 1, 1, 1, 1]);
   });
 
   it('does not send a second reply card after a streaming card finalized', async () => {

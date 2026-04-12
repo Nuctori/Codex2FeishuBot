@@ -60,6 +60,8 @@ interface CodexConfigOverrides {
 }
 
 const CODEX_HOME_SEED_FILES = ['config.toml', 'auth.json', 'cap_sid'];
+const DEFAULT_CODEX_FIRST_EVENT_TIMEOUT_MS = 45_000;
+const DEFAULT_CODEX_IDLE_TIMEOUT_MS = 5 * 60_000;
 
 type StreamItemState = {
   announcedToolUses: Set<string>;
@@ -71,6 +73,30 @@ function createStreamItemState(): StreamItemState {
     announcedToolUses: new Set<string>(),
     insertedCommandBlocks: new Set<string>(),
   };
+}
+
+function parsePositiveIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function getCodexFirstEventTimeoutMs(): number {
+  return parsePositiveIntEnv('CTI_CODEX_FIRST_EVENT_TIMEOUT_MS', DEFAULT_CODEX_FIRST_EVENT_TIMEOUT_MS);
+}
+
+function getCodexIdleTimeoutMs(): number {
+  return parsePositiveIntEnv('CTI_CODEX_IDLE_TIMEOUT_MS', DEFAULT_CODEX_IDLE_TIMEOUT_MS);
+}
+
+function formatTimeoutMs(timeoutMs: number): string {
+  if (timeoutMs < 60_000) {
+    return `${Math.max(1, Math.round(timeoutMs / 1000))}s`;
+  }
+  const minutes = Math.floor(timeoutMs / 60_000);
+  const seconds = Math.round((timeoutMs % 60_000) / 1000);
+  return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
 }
 
 function resolveSandboxMode(): string {
@@ -418,6 +444,7 @@ export class CodexProvider implements LLMProvider {
         (async () => {
           const tempFiles: string[] = [];
           const streamState = createStreamItemState();
+          let clearWatchdogs = () => {};
           try {
             const { codex } = await self.ensureSDK();
 
@@ -443,6 +470,67 @@ export class CodexProvider implements LLMProvider {
               f => f.type.startsWith('image/')
             ) ?? [];
 
+            const runAbortController = new AbortController();
+            const externalAbortSignal = params.abortController?.signal;
+            if (externalAbortSignal) {
+              if (externalAbortSignal.aborted) {
+                runAbortController.abort(externalAbortSignal.reason);
+              } else {
+                externalAbortSignal.addEventListener('abort', () => {
+                  runAbortController.abort(externalAbortSignal.reason);
+                }, { once: true });
+              }
+            }
+
+            const firstEventTimeoutMs = getCodexFirstEventTimeoutMs();
+            const idleTimeoutMs = getCodexIdleTimeoutMs();
+            let firstEventTimer: ReturnType<typeof setTimeout> | null = null;
+            let idleTimer: ReturnType<typeof setTimeout> | null = null;
+            let timeoutMessage: string | null = null;
+
+            clearWatchdogs = () => {
+              if (firstEventTimer) {
+                clearTimeout(firstEventTimer);
+                firstEventTimer = null;
+              }
+              if (idleTimer) {
+                clearTimeout(idleTimer);
+                idleTimer = null;
+              }
+            };
+
+            const abortForTimeout = (message: string) => {
+              if (timeoutMessage) return;
+              timeoutMessage = message;
+              if (!runAbortController.signal.aborted) {
+                runAbortController.abort(new Error(message));
+              }
+            };
+
+            const armFirstEventWatchdog = () => {
+              if (firstEventTimeoutMs <= 0) return;
+              if (firstEventTimer) clearTimeout(firstEventTimer);
+              firstEventTimer = setTimeout(() => {
+                abortForTimeout(`Codex timed out waiting ${formatTimeoutMs(firstEventTimeoutMs)} for the first event.`);
+              }, firstEventTimeoutMs);
+            };
+
+            const armIdleWatchdog = () => {
+              if (idleTimeoutMs <= 0) return;
+              if (idleTimer) clearTimeout(idleTimer);
+              idleTimer = setTimeout(() => {
+                abortForTimeout(`Codex stream was idle for ${formatTimeoutMs(idleTimeoutMs)}.`);
+              }, idleTimeoutMs);
+            };
+
+            const markEventProgress = () => {
+              if (firstEventTimer) {
+                clearTimeout(firstEventTimer);
+                firstEventTimer = null;
+              }
+              armIdleWatchdog();
+            };
+
             let input: string | Array<Record<string, string>>;
             if (imageFiles.length > 0) {
               const parts: Array<Record<string, string>> = [
@@ -463,6 +551,9 @@ export class CodexProvider implements LLMProvider {
             let retryFresh = false;
 
             while (true) {
+              clearWatchdogs();
+              armFirstEventWatchdog();
+
               let thread: ThreadInstance;
               if (savedThreadId) {
                 try {
@@ -477,12 +568,13 @@ export class CodexProvider implements LLMProvider {
               let sawAnyEvent = false;
               try {
                 const { events } = await thread.runStreamed(input, {
-                  signal: params.abortController?.signal,
+                  signal: runAbortController.signal,
                 });
 
                 for await (const event of events) {
                   sawAnyEvent = true;
-                  if (params.abortController?.signal.aborted) {
+                  markEventProgress();
+                  if (runAbortController.signal.aborted) {
                     break;
                   }
 
@@ -548,6 +640,10 @@ export class CodexProvider implements LLMProvider {
                 break;
               } catch (err) {
                 const message = err instanceof Error ? err.message : String(err);
+                if (timeoutMessage) {
+                  self.threadIds.delete(params.sessionId);
+                  throw new Error(timeoutMessage);
+                }
                 if (savedThreadId && !retryFresh && !sawAnyEvent && shouldRetryFreshThread(message)) {
                   console.warn('[codex-provider] Resume failed, retrying with a fresh thread:', message);
                   savedThreadId = undefined;
@@ -569,6 +665,7 @@ export class CodexProvider implements LLMProvider {
               // Controller already closed
             }
           } finally {
+            clearWatchdogs();
             // Clean up temp image files
             for (const tmp of tempFiles) {
               try { fs.unlinkSync(tmp); } catch { /* ignore */ }

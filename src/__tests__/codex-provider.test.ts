@@ -816,7 +816,58 @@ describe('CodexProvider', () => {
 
     await collectStream(stream);
 
-    assert.equal(capturedTurnOptions?.signal, abortController.signal);
+    assert.ok(capturedTurnOptions?.signal, 'runStreamed should receive a signal');
+    abortController.abort(new Error('stop'));
+    assert.equal(capturedTurnOptions?.signal?.aborted, true);
+  });
+
+  it('aborts and emits an error when Codex never yields a first event', async () => {
+    const oldTimeout = process.env.CTI_CODEX_FIRST_EVENT_TIMEOUT_MS;
+    process.env.CTI_CODEX_FIRST_EVENT_TIMEOUT_MS = '20';
+    try {
+      const { CodexProvider } = await import('../codex-provider.js');
+      const { PendingPermissions } = await import('../permission-gateway.js');
+      const provider = new CodexProvider(new PendingPermissions());
+
+      let capturedSignal: AbortSignal | undefined;
+      const mockThread = {
+        runStreamed: (_input: unknown, turnOptions?: { signal?: AbortSignal }) => {
+          capturedSignal = turnOptions?.signal;
+          return {
+            events: (async function* () {
+              await new Promise<void>((_resolve, reject) => {
+                if (!turnOptions?.signal) return;
+                turnOptions.signal.addEventListener('abort', () => {
+                  const error = new Error('aborted');
+                  error.name = 'AbortError';
+                  reject(error);
+                }, { once: true });
+              });
+            })(),
+          };
+        },
+      };
+
+      (provider as any).sdk = { Codex: class { constructor() {} } };
+      (provider as any).codex = {
+        startThread: () => mockThread,
+      };
+
+      const stream = provider.streamChat({
+        prompt: 'stuck turn',
+        sessionId: 'stuck-turn-session',
+      });
+
+      const chunks = await collectStream(stream);
+      const events = parseSSEChunks(chunks);
+      const errorEvent = events.find(e => e.type === 'error');
+
+      assert.ok(capturedSignal?.aborted, 'Watchdog should abort the stuck Codex turn');
+      assert.ok(errorEvent, 'Stuck turn should emit an error event');
+      assert.match(errorEvent!.data, /timed out waiting .*first event/i);
+    } finally {
+      restoreEnv('CTI_CODEX_FIRST_EVENT_TIMEOUT_MS', oldTimeout);
+    }
   });
 });
 

@@ -36,6 +36,7 @@ function createWorkspaceFixture(name: string, projectNames: string[] = []): {
 function makeSettings(): Map<string, string> {
   return new Map([
     ['remote_bridge_enabled', 'true'],
+    ['bridge_locale', 'zh-CN'],
     ['bridge_default_work_dir', 'D:\\projects\\default'],
     ['bridge_default_model', 'test-model'],
     ['bridge_default_mode', 'code'],
@@ -290,7 +291,7 @@ describe('Feishu navigation cards', () => {
     assert.equal(workspaces.some((group: any) => group.path === TEST_CODEX_HOME), true);
     assert.equal(workspaces.some((group: any) => group.path === koishi.codexHome), true);
     assert.equal(workspaces.some((group: any) => group.path === firebook.codexHome), true);
-    assert.match(koishiCard, /Workspace/);
+    assert.match(koishiCard, /Workspace|工作区/);
     assert.match(koishiCard, /koishi-workspace/);
     assert.doesNotMatch(koishiCard, /mi-band/);
     assert.match(koishiCard, /nav:workspace:/);
@@ -348,9 +349,9 @@ describe('Feishu navigation cards', () => {
     const sessionsCard = bridgeTestOnly.buildFeishuProjectSessionsCard(group, binding.codepilotSessionId, binding);
     const previewCard = bridgeTestOnly.buildFeishuSessionPreviewCard('44444444-4444-4444-8444-444444444444', binding.codepilotSessionId);
 
-    assert.match(sessionsCard, /3 msgs/);
-    assert.match(sessionsCard, /Created 2026-04-11/);
-    assert.match(sessionsCard, /Updated 2026-04-11/);
+    assert.match(sessionsCard, /3 (msgs|条消息)/);
+    assert.match(sessionsCard, /(Created|创建) 2026-04-11/);
+    assert.match(sessionsCard, /(Updated|更新) 2026-04-11/);
     assert.ok(previewCard);
     assert.match(previewCard!, /first native question/);
     assert.match(previewCard!, /first native answer/);
@@ -477,51 +478,51 @@ describe('Feishu navigation cards', () => {
     const statusCard = bridgeTestOnly.buildFeishuStatusCard(dockBinding);
 
     assert.match(projectCard, /nav:project:/);
-    assert.match(projectCard, /Projects|alpha-service/);
-    assert.match(projectCard, /Open Sessions/);
-    assert.match(projectCard, /All|Workspace/);
-    assert.match(projectCard, /nav:workspace:|All \*/);
+    assert.match(projectCard, /Projects|项目|alpha-service/);
+    assert.match(projectCard, /Open Sessions|已打开会话/);
+    assert.match(projectCard, /All|全部|Workspace|工作区/);
+    assert.match(projectCard, /nav:workspace:|All \*|全部 \*/);
     assert.equal(workspaceGroups.some((group: any) => group.path === workspace.projects['beta-service']), true);
     assert.equal(groups.some((group: any) => group.path === externalProject), true);
     assert.equal(workspaceGroups.some((group: any) => group.path === externalProject), false);
-    assert.match(projectCard, /Current Session/);
+    assert.match(projectCard, /Current Session|当前会话/);
     assert.match(projectCard, /alpha-2/);
     assert.match(responseCard, /alpha-service/);
     assert.match(responseCard, /alpha-2/);
     assert.match(responseCard, /pong/);
-    assert.match(responseCard, /Current Session/);
+    assert.match(responseCard, /Current Session|当前会话/);
     assert.match(responseCard, /nav:peek:/);
-    assert.match(responseCard, /Sessions/);
-    assert.doesNotMatch(responseCard, /Projects/);
-    assert.match(replyNavCard, /Current Session/);
+    assert.match(responseCard, /Sessions|会话/);
+    assert.doesNotMatch(responseCard, /Projects(?!.*alpha-service)|项目(?!.*alpha-service)/);
+    assert.match(replyNavCard, /Current Session|当前会话/);
     assert.match(replyNavCard, /alpha-2/);
     assert.match(replyNavCard, /nav:peek:/);
-    assert.match(replyNavCard, /Current Project/);
-    assert.match(replyNavCard, /All Projects/);
+    assert.match(replyNavCard, /Current Project|当前项目/);
+    assert.match(replyNavCard, /All Projects|全部项目/);
     assert.match(sessionsCard, /nav:bind:/);
-    assert.match(sessionsCard, /Open Sessions/);
-    assert.match(sessionsCard, /Projects/);
-    assert.match(sessionsCard, /projects|nav:workspace:/);
+    assert.match(sessionsCard, /Open Sessions|已打开会话/);
+    assert.match(sessionsCard, /Projects|项目/);
+    assert.match(sessionsCard, /projects|项目|nav:workspace:/);
     assert.match(sessionsCard, /nav:peek:/);
     assert.match(sessionsCard, /nav:archive:/);
-    assert.match(sessionsCard, /"content":"New"/);
-    assert.match(sessionsCard, /"content":"Status"/);
-    assert.doesNotMatch(sessionsCard, /Current Session/);
+    assert.match(sessionsCard, /"content":"(New|新建)"/);
+    assert.match(sessionsCard, /"content":"(Status|状态)"/);
+    assert.doesNotMatch(sessionsCard, /Current Session|当前会话/);
     assert.match(sessionsCard, new RegExp(`"session_id":"${alpha.id}"`));
-    assert.match(sessionsCard, /Use|Current/);
-    assert.match(sessionsCard, /msg/);
+    assert.match(sessionsCard, /Use|Current|切换|当前/);
+    assert.match(sessionsCard, /msg|消息/);
     assert.match(sessionsCard, new RegExp(alpha.id.slice(0, 8)));
     assert.ok(sessionPreviewCard);
     assert.match(sessionPreviewCard!, /collapsible_panel/);
-    assert.match(sessionPreviewCard!, /Recent Context/);
-    assert.match(sessionPreviewCard!, /2 msgs/);
+    assert.match(sessionPreviewCard!, /Recent Context|最近上下文/);
+    assert.match(sessionPreviewCard!, /2 (msgs|条消息)/);
     assert.match(statusCard, /nav:projects/);
     assert.match(statusCard, /collapsible_panel/);
-    assert.match(statusCard, /Open Sessions/);
+    assert.match(statusCard, /Open Sessions|已打开会话/);
     assert.match(statusCard, /nav:dock:select:/);
     assert.match(statusCard, /nav:dock:close:/);
-    assert.match(statusCard, /2 projects/);
-    assert.match(statusCard, /2 unread/);
+    assert.match(statusCard, /2 (projects|个项目|项目)/);
+    assert.match(statusCard, /2 (unread|未读)/);
     assert.match(statusCard, /alpha-s/);
     assert.match(statusCard, /beta-se/);
     assert.match(statusCard, new RegExp(dockBinding.codepilotSessionId.slice(0, 8)));
@@ -560,14 +561,14 @@ describe('Feishu navigation cards', () => {
     assert.match(page0, /1\/2/);
     assert.match(page1, /2\/2/);
     assert.match(page0, /nav:project:.*:1/);
-    assert.match(page1, /"content":"Newer"/);
+    assert.match(page1, /"content":"(Newer|更新的|较新)"/);
     assert.match(page0, /alpha-7/);
     assert.match(page0, /alpha-3/);
     assert.doesNotMatch(page0, /alpha-2/);
     assert.match(page1, /alpha-2/);
     assert.match(page1, /alpha-1/);
-    assert.match(page0, /"content":"New"/);
-    assert.doesNotMatch(page0, /Current Session/);
+    assert.match(page0, /"content":"(New|新建)"/);
+    assert.doesNotMatch(page0, /Current Session|当前会话/);
   });
 
   it('supports paged context previews with total counts and pager callbacks', () => {
@@ -590,11 +591,11 @@ describe('Feishu navigation cards', () => {
     const statusCard = (bridgeTestOnly.buildFeishuStatusCard as any)(binding, 0);
     const previewCardPage1 = (bridgeTestOnly.buildFeishuSessionPreviewCard as any)(session.id, binding.codepilotSessionId, 1);
 
-    assert.match(statusCard, /Recent Context/);
-    assert.match(statusCard, /6-15 \/ 15 msg|11-15 \/ 15 msg/);
+    assert.match(statusCard, /Recent Context|最近上下文/);
+    assert.match(statusCard, /6-15 \/ 15 (msg|条消息|消息)|11-15 \/ 15 (msg|条消息|消息)/);
     assert.match(statusCard, /nav:status:1/);
     assert.ok(previewCardPage1);
-    assert.match(previewCardPage1!, /1-5 \/ 15 msg/);
+    assert.match(previewCardPage1!, /1-5 \/ 15 (msg|条消息|消息)/);
     assert.match(previewCardPage1!, /nav:peek:.*:0/);
   });
 
@@ -621,12 +622,12 @@ describe('Feishu navigation cards', () => {
     const statusCardWithDetail = (bridgeTestOnly.buildFeishuStatusCard as any)(binding, 0, 0);
     assert.match(statusCard, /我先把这个判断是对的/);
     assert.match(statusCard, /Bash/);
-    assert.match(statusCard, /\*\*1\. Assistant\*\*/);
+    assert.match(statusCard, /\*\*1\. (Assistant|助手)\*\*/);
     assert.match(statusCard, /collapsible_panel/);
     assert.doesNotMatch(statusCard, /nav:ctx:status:0:0/);
     assert.doesNotMatch(statusCard, /\[\{\"type\":\"text\"/);
     assert.doesNotMatch(statusCard, /"content":"Open"/);
-    assert.match(statusCardWithDetail, /full content/);
+    assert.match(statusCardWithDetail, /full content|完整内容/);
     assert.match(statusCardWithDetail, /nav:ctxclear:status:0/);
     assert.doesNotMatch(statusCardWithDetail, /\*\*1\. Assistant\*\*/);
   });
@@ -881,7 +882,7 @@ describe('Feishu navigation cards', () => {
     await bridgeTestOnly.handleMessage(fakeAdapter, projectListMsg);
     assert.equal(sends.at(-1)?.parseMode, 'CardJson');
     assert.equal(sends.at(-1)?.updateMessageId, 'om_projects');
-    assert.match(sends.at(-1)!.text, /Projects/);
+    assert.match(sends.at(-1)!.text, /Projects|项目/);
     assert.match(sends.at(-1)!.text, /alpha-service/);
     assert.match(sends.at(-1)!.text, /beta-service/);
 
@@ -898,7 +899,7 @@ describe('Feishu navigation cards', () => {
     const previewMsg = makeNavCallbackMessage(`nav:peek:${alpha1.id}`, 'om_preview_alpha1');
     await bridgeTestOnly.handleMessage(fakeAdapter, previewMsg);
     assert.equal(sends.at(-1)?.updateMessageId, 'om_preview_alpha1');
-    assert.match(sends.at(-1)!.text, /Recent Context/);
+    assert.match(sends.at(-1)!.text, /Recent Context|最近上下文/);
     assert.match(sends.at(-1)!.text, /payment timeout/);
     assert.match(sends.at(-1)!.text, /I found a null config value/);
 
@@ -907,7 +908,7 @@ describe('Feishu navigation cards', () => {
     const rebound = store.getChannelBinding('feishu', 'chat-1');
     assert.equal(rebound?.codepilotSessionId, alpha1.id);
     assert.equal(sends.at(-1)?.updateMessageId, 'om_bind_alpha1');
-    assert.match(sends.at(-1)!.text, /Current Session/);
+    assert.match(sends.at(-1)!.text, /Current Session|当前会话/);
     assert.match(sends.at(-1)!.text, new RegExp(alpha1.id.slice(0, 8)));
 
     store.updateChannelBinding(rebound!.id, {
@@ -923,7 +924,7 @@ describe('Feishu navigation cards', () => {
     const dockSelected = store.getChannelBinding('feishu', 'chat-1');
     assert.equal(dockSelected?.codepilotSessionId, beta1.id);
     assert.equal(sends.at(-1)?.updateMessageId, 'om_dock_select_beta1');
-    assert.match(sends.at(-1)!.text, /Open Sessions/);
+    assert.match(sends.at(-1)!.text, /Open Sessions|已打开会话/);
     assert.match(sends.at(-1)!.text, new RegExp(beta1.id.slice(0, 8)));
 
     const dockCloseMsg = makeNavCallbackMessage(`nav:dock:close:${beta1.id}`, 'om_dock_close_beta1');
@@ -948,7 +949,7 @@ describe('Feishu navigation cards', () => {
     const statusMsg = makeNavCallbackMessage('nav:status', 'om_status');
     await bridgeTestOnly.handleMessage(fakeAdapter, statusMsg);
     assert.equal(sends.at(-1)?.updateMessageId, 'om_status');
-    assert.match(sends.at(-1)!.text, /Current Session/);
+    assert.match(sends.at(-1)!.text, /Current Session|当前会话/);
     assert.match(sends.at(-1)!.text, /alpha-service/);
 
     assert.deepEqual(acked, [1, 1, 1, 1, 1, 1, 1, 1]);
@@ -1002,10 +1003,10 @@ describe('Feishu navigation cards', () => {
     assert.notEqual(rebound!.codepilotSessionId, existing.id);
     assert.equal(sends.at(-1)?.parseMode, 'CardJson');
     assert.equal(sends.at(-1)?.updateMessageId, 'om_project_new_alpha');
-    assert.match(sends.at(-1)!.text, /Open Sessions/);
+    assert.match(sends.at(-1)!.text, /Open Sessions|已打开会话/);
     assert.match(sends.at(-1)!.text, /alpha-service/);
     assert.match(sends.at(-1)!.text, new RegExp(rebound!.codepilotSessionId.slice(0, 8)));
-    assert.doesNotMatch(sends.at(-1)!.text, /Current Session/);
+    assert.doesNotMatch(sends.at(-1)!.text, /Current Session|当前会话/);
   });
 
   it('falls back to project text instead of claiming missing project when a card update fails', async () => {
@@ -1055,8 +1056,8 @@ describe('Feishu navigation cards', () => {
     const htmlFallback = [...sends].reverse().find((item) => item.parseMode === 'HTML');
     assert.ok(htmlFallback);
     assert.match(htmlFallback!.text, /alpha-service/);
-    assert.match(htmlFallback!.text, /Projects/);
-    assert.doesNotMatch(htmlFallback!.text, /Project not found/);
+    assert.match(htmlFallback!.text, /Projects|项目/);
+    assert.doesNotMatch(htmlFallback!.text, /Project not found|项目不存在/);
   });
 
   it('binds a discovered codex session by creating a bridge mirror with sdk session id', async () => {
@@ -1104,7 +1105,7 @@ describe('Feishu navigation cards', () => {
     assert.equal(mirrored?.sdk_session_id, '33333333-3333-4333-8333-333333333333');
     assert.equal(mirrored?.name, '小米手环的会话');
     assert.equal(sends.at(-1)?.updateMessageId, 'om_bind_codex');
-    assert.match(sends.at(-1)!.text, /Current Session/);
+    assert.match(sends.at(-1)!.text, /Current Session|当前会话/);
     assert.match(sends.at(-1)!.text, /mi-band/);
   });
 
@@ -1160,7 +1161,7 @@ describe('Feishu navigation cards', () => {
     assert.equal(mirrored?.sdk_session_id, '019d56b8-6a5a-79d1-a1a2-0bacb6f0a304');
     assert.equal(mirrored?.name, 'Review Claude-to-IM-skill Feishu use');
     assert.equal(sends.at(-1)?.parseMode, 'CardJson');
-    assert.match(sends.at(-1)!.text, /Current Session/);
+    assert.match(sends.at(-1)!.text, /Current Session|当前会话/);
   });
 
   it('does not send a second reply card after a streaming card finalized', async () => {

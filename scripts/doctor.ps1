@@ -7,6 +7,7 @@ $ErrorActionPreference = 'Stop'
 
 $scriptDir = Split-Path -Parent $PSCommandPath
 $doctorScript = Join-Path $scriptDir 'doctor.sh'
+$doctorNodeScript = Join-Path $scriptDir 'doctor-node.mjs'
 $bashCommand = Get-Command bash -ErrorAction SilentlyContinue
 $bashPath = if ($bashCommand) { $bashCommand.Source } else { $null }
 
@@ -24,8 +25,13 @@ if (-not $bashPath) {
 }
 
 if (-not $bashPath) {
-    Write-Error "bash not found in PATH. Install Git Bash or WSL, or run the diagnostics from a Unix-like shell."
-    exit 1
+    if (-not (Test-Path $doctorNodeScript)) {
+        Write-Error "bash not found in PATH, and fallback diagnostics script is missing: $doctorNodeScript"
+        exit 1
+    }
+
+    & node $doctorNodeScript @args
+    exit $LASTEXITCODE
 }
 
 & $bashPath $doctorScript @args

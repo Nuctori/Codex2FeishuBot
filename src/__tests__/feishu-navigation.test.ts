@@ -3,10 +3,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { FeishuAdapter } from '../../node_modules/claude-to-im/src/lib/bridge/adapters/feishu-adapter.js';
-import { initBridgeContext } from '../../node_modules/claude-to-im/src/lib/bridge/context.js';
-import { _testOnly as bridgeTestOnly } from '../../node_modules/claude-to-im/src/lib/bridge/bridge-manager.js';
-import { buildToolProgressMarkdown } from '../../node_modules/claude-to-im/src/lib/bridge/markdown/feishu.js';
+import { FeishuAdapter } from '../bridge/adapters/feishu-adapter.js';
+import { initBridgeContext } from '../bridge/context.js';
+import { _testOnly as bridgeTestOnly } from '../bridge/bridge-manager.js';
+import { buildToolProgressMarkdown } from '../bridge/markdown/feishu.js';
 
 import { CTI_HOME } from '../config.js';
 import { JsonFileStore } from '../store.js';

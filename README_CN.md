@@ -307,6 +307,12 @@ start bridge
     └── status.json         ← 当前状态
 ```
 
+### 发布说明
+
+- 现在仓库会直接发布 `src/bridge` 下的桥接运行时，不再依赖 `node_modules/claude-to-im/src/...` 这类私有源码路径。
+- 平台差异被限制在很薄的一层进程托管代码里，比如 `scripts/supervisor-windows.ps1`、`scripts/daemon.sh` 和 `src/windows-watchdog.ts`。
+- 会话路由、飞书导航卡片、权限处理、消息分发等核心业务逻辑都留在共享桥接层内，便于跨平台发布和维护。
+
 ### 核心组件
 
 | 组件 | 职责 |

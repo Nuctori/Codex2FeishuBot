@@ -32,10 +32,13 @@ $CtiHome    = if ($env:CTI_HOME) { $env:CTI_HOME } else { Join-Path $env:USERPRO
 $SkillDir   = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 $RuntimeDir = Join-Path $CtiHome 'runtime'
 $PidFile    = Join-Path $RuntimeDir 'bridge.pid'
+$WatchdogPidFile = Join-Path $RuntimeDir 'bridge-watchdog.pid'
+$StopFile = Join-Path $RuntimeDir 'bridge.stop'
 $StatusFile = Join-Path $RuntimeDir 'status.json'
 $LogFile    = Join-Path (Join-Path $CtiHome 'logs') 'bridge.log'
 $ErrorLogFile = Join-Path (Join-Path $CtiHome 'logs') 'bridge-error.log'
 $DaemonMjs  = Join-Path (Join-Path $SkillDir 'dist') 'daemon.mjs'
+$WatchdogMjs  = Join-Path (Join-Path $SkillDir 'dist') 'windows-watchdog.mjs'
 
 $ServiceName = 'ClaudeToIMBridge'
 
@@ -69,6 +72,11 @@ function Ensure-Built {
 
 function Read-Pid {
     if (Test-Path $PidFile) { return (Get-Content $PidFile -Raw).Trim() }
+    return $null
+}
+
+function Read-WatchdogPid {
+    if (Test-Path $WatchdogPidFile) { return (Get-Content $WatchdogPidFile -Raw).Trim() }
     return $null
 }
 
@@ -106,6 +114,16 @@ function Test-BridgeProcess {
 
     $daemonPattern = [regex]::Escape($DaemonMjs)
     return $commandLine -match $daemonPattern
+}
+
+function Test-WatchdogProcess {
+    param([string]$ProcessId)
+    if (-not (Test-PidAlive $ProcessId)) { return $false }
+    $commandLine = Get-ProcessCommandLine $ProcessId
+    if ([string]::IsNullOrWhiteSpace($commandLine)) { return $false }
+
+    $watchdogPattern = [regex]::Escape($WatchdogMjs)
+    return $commandLine -match $watchdogPattern
 }
 
 function Test-StatusRunning {
@@ -163,6 +181,7 @@ function Show-FailureHelp {
     Write-Host "  1. Run diagnostics:  powershell -File `"$SkillDir\scripts\doctor.ps1`""
     Write-Host "  2. Check full logs:  powershell -File `"$SkillDir\scripts\daemon.ps1`" logs 100"
     Write-Host "  3. Rebuild bundle:   cd `"$SkillDir`"; npm run build"
+    Write-Host "  4. Install WinSW or NSSM for true service-mode auto restart"
 }
 
 function Get-ForwardedServiceEnvironment {
@@ -315,7 +334,7 @@ function Start-Fallback {
         [System.Environment]::SetEnvironmentVariable('CTI_HOME', $CtiHome, 'Process')
 
         $proc = Start-Process -FilePath $nodePath `
-            -ArgumentList $DaemonMjs `
+            -ArgumentList $WatchdogMjs `
             -WorkingDirectory $SkillDir `
             -WindowStyle Hidden `
             -RedirectStandardOutput $LogFile `
@@ -326,8 +345,7 @@ function Start-Fallback {
         [System.Environment]::SetEnvironmentVariable('CTI_HOME', $originalCtiHome, 'Process')
     }
 
-    # Write initial PID (main.ts will overwrite with real PID)
-    Set-Content -Path $PidFile -Value $proc.Id
+    Set-Content -Path $WatchdogPidFile -Value $proc.Id
     return $proc.Id
 }
 
@@ -338,16 +356,25 @@ switch ($Command) {
         Ensure-Dirs
         Ensure-Built
 
-        $existingPid = Read-Pid
-        if ($existingPid -and (Test-BridgeProcess $existingPid)) {
-            Write-Host "Bridge already running (PID: $existingPid)"
+        $existingWatchdogPid = Read-WatchdogPid
+        if ($existingWatchdogPid -and (Test-WatchdogProcess $existingWatchdogPid)) {
+            Write-Host "Bridge watchdog already running (PID: $existingWatchdogPid)"
             if (Test-Path $StatusFile) { Get-Content $StatusFile -Raw }
             exit 1
-        } elseif ($existingPid) {
-            Write-Host "Ignoring stale PID file (PID: $existingPid)"
+        } elseif ($existingWatchdogPid) {
+            Write-Host "Ignoring stale watchdog PID file (PID: $existingWatchdogPid)"
+            if (Test-Path $WatchdogPidFile) { Remove-Item $WatchdogPidFile -Force }
+            Write-StoppedStatus -Reason 'stale_watchdog_pid'
+        }
+
+        $existingPid = Read-Pid
+        if ($existingPid -and -not (Test-BridgeProcess $existingPid)) {
+            Write-Host "Ignoring stale bridge PID file (PID: $existingPid)"
             if (Test-Path $PidFile) { Remove-Item $PidFile -Force }
             Write-StoppedStatus -Reason 'stale_pid'
         }
+
+        if (Test-Path $StopFile) { Remove-Item $StopFile -Force }
 
         # Check if registered as Windows Service
         $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
@@ -368,18 +395,27 @@ switch ($Command) {
                 exit 1
             }
         } else {
-            Write-Host "Starting bridge (background process)..."
-            $bridgePid = Start-Fallback
+            Write-Host "Starting bridge watchdog (background process)..."
+            $watchdogPid = Start-Fallback
             Start-Sleep -Seconds 3
 
+            $newWatchdogPid = Read-WatchdogPid
             $newPid = Read-Pid
-            if ($newPid -and (Test-BridgeProcess $newPid) -and (Test-StatusRunning $newPid)) {
-                Write-Host "Bridge started (PID: $newPid)"
+            $watchdogAlive = $newWatchdogPid -and (Test-WatchdogProcess $newWatchdogPid)
+            $bridgeAlive = $newPid -and (Test-BridgeProcess $newPid)
+            $statusReady = $newPid -and (Test-StatusRunning $newPid)
+            if ($watchdogAlive -and $bridgeAlive) {
+                Write-Host "Bridge started (PID: $newPid, watchdog PID: $newWatchdogPid)"
+                if (-not $statusReady) {
+                    Write-Host "Bridge status file is still warming up; watchdog confirms the child is alive."
+                }
                 if (Test-Path $StatusFile) { Get-Content $StatusFile -Raw }
             } else {
                 Write-Host "Failed to start bridge."
-                if (-not $newPid -or -not (Test-BridgeProcess $newPid)) {
-                    Write-Host "  Process exited immediately."
+                if (-not $watchdogAlive) {
+                    Write-Host "  Watchdog exited immediately."
+                } elseif (-not $bridgeAlive) {
+                    Write-Host "  Bridge child did not come up."
                 }
                 Write-StoppedStatus -Reason 'start_failed'
                 Show-LastExitReason
@@ -398,6 +434,18 @@ switch ($Command) {
             if (Test-Path $PidFile) { Remove-Item $PidFile -Force }
             Write-StoppedStatus -Reason 'stopped'
         } else {
+            $watchdogPid = Read-WatchdogPid
+            if ($watchdogPid -and (Test-WatchdogProcess $watchdogPid)) {
+                New-Item -ItemType File -Path $StopFile -Force | Out-Null
+                taskkill /PID $watchdogPid /T /F | Out-Null
+                Write-Host "Bridge stopped"
+                Write-StoppedStatus -Reason 'stopped'
+                if (Test-Path $WatchdogPidFile) { Remove-Item $WatchdogPidFile -Force }
+                if (Test-Path $PidFile) { Remove-Item $PidFile -Force }
+                if (Test-Path $StopFile) { Remove-Item $StopFile -Force }
+                exit 0
+            }
+
             $bridgePid = Read-Pid
             if (-not $bridgePid) {
                 Write-Host "No bridge running"
@@ -417,10 +465,13 @@ switch ($Command) {
                 Write-StoppedStatus -Reason 'stale_pid'
             }
             if (Test-Path $PidFile) { Remove-Item $PidFile -Force }
+            if (Test-Path $WatchdogPidFile) { Remove-Item $WatchdogPidFile -Force }
+            if (Test-Path $StopFile) { Remove-Item $StopFile -Force }
         }
     }
 
     'status' {
+        $watchdogPid = Read-WatchdogPid
         $bridgePid = Read-Pid
 
         # Check Windows Service
@@ -429,17 +480,32 @@ switch ($Command) {
             Write-Host "Windows Service '$ServiceName': $($svc.Status)"
         }
 
+        if ($watchdogPid -and (Test-WatchdogProcess $watchdogPid)) {
+            Write-Host "Bridge watchdog is running (PID: $watchdogPid)"
+        }
+
         if ($bridgePid -and (Test-BridgeProcess $bridgePid)) {
             Write-Host "Bridge process is running (PID: $bridgePid)"
             if (Test-StatusRunning $bridgePid) {
                 Write-Host "Bridge status: running"
             } else {
-                Write-Host "Bridge status: process alive but status.json not reporting running"
+                if ($watchdogPid -and (Test-WatchdogProcess $watchdogPid)) {
+                    Write-Host "Bridge status: process alive under watchdog; status.json is lagging"
+                } else {
+                    Write-Host "Bridge status: process alive but status.json not reporting running"
+                }
             }
+            if (Test-Path $StatusFile) { Get-Content $StatusFile -Raw }
+        } elseif ($watchdogPid -and (Test-WatchdogProcess $watchdogPid)) {
+            Write-Host "Bridge child is currently not visible, but the watchdog is still running."
+            Write-Host "Bridge status: watchdog supervising / child may be restarting"
             if (Test-Path $StatusFile) { Get-Content $StatusFile -Raw }
         } else {
             Write-Host "Bridge is not running"
             if (Test-Path $PidFile) { Remove-Item $PidFile -Force }
+            if ($watchdogPid -and -not (Test-WatchdogProcess $watchdogPid) -and (Test-Path $WatchdogPidFile)) {
+                Remove-Item $WatchdogPidFile -Force
+            }
             Write-StoppedStatus -Reason 'not_running'
             Show-LastExitReason
         }

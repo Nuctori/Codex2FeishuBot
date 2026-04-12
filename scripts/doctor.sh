@@ -4,6 +4,8 @@ CTI_HOME="$HOME/.claude-to-im"
 CONFIG_FILE="$CTI_HOME/config.env"
 PID_FILE="$CTI_HOME/runtime/bridge.pid"
 LOG_FILE="$CTI_HOME/logs/bridge.log"
+SKILL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+CONFIG_ENV_HELPER="$SKILL_DIR/scripts/config-env.mjs"
 
 PASS=0
 FAIL=0
@@ -41,10 +43,12 @@ else
 fi
 
 # --- Helper: read a value from config.env ---
-get_config() { grep "^$1=" "$CONFIG_FILE" 2>/dev/null | head -1 | cut -d= -f2- | sed 's/^["'"'"']//;s/["'"'"']$//'; }
+get_config() {
+  [ -f "$CONFIG_FILE" ] || return 0
+  node "$CONFIG_ENV_HELPER" get "$CONFIG_FILE" "$1" 2>/dev/null || true
+}
 
 # --- Read runtime setting ---
-SKILL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 CTI_RUNTIME=$(get_config CTI_RUNTIME)
 CTI_RUNTIME="${CTI_RUNTIME:-claude}"
 echo "Runtime: $CTI_RUNTIME"
@@ -227,9 +231,18 @@ fi
 
 # --- Codex checks (codex/auto modes) ---
 if [ "$CTI_RUNTIME" = "codex" ] || [ "$CTI_RUNTIME" = "auto" ]; then
-  if command -v codex &>/dev/null; then
+  CODEX_EXE=$(get_config CTI_CODEX_EXECUTABLE)
+  [ -z "$CODEX_EXE" ] && CODEX_EXE=$(get_config CODEX_EXECUTABLE)
+  CODEX_SDK="$SKILL_DIR/node_modules/@openai/codex-sdk"
+
+  if [ -n "$CODEX_EXE" ] && [ -x "$CODEX_EXE" ]; then
+    CODEX_VER=$("$CODEX_EXE" --version 2>/dev/null || echo "unknown")
+    check "Codex executable available (${CODEX_VER} at ${CODEX_EXE})" 0
+  elif command -v codex &>/dev/null; then
     CODEX_VER=$(codex --version 2>/dev/null || echo "unknown")
     check "Codex CLI available (${CODEX_VER})" 0
+  elif [ -d "$CODEX_SDK" ]; then
+    check "Codex runtime available via @openai/codex-sdk" 0
   else
     if [ "$CTI_RUNTIME" = "codex" ]; then
       check "Codex CLI available (not found in PATH)" 1
@@ -239,7 +252,6 @@ if [ "$CTI_RUNTIME" = "codex" ] || [ "$CTI_RUNTIME" = "auto" ]; then
   fi
 
   # Check @openai/codex-sdk
-  CODEX_SDK="$SKILL_DIR/node_modules/@openai/codex-sdk"
   if [ -d "$CODEX_SDK" ]; then
     check "@openai/codex-sdk installed" 0
   else
@@ -253,8 +265,14 @@ if [ "$CTI_RUNTIME" = "codex" ] || [ "$CTI_RUNTIME" = "auto" ]; then
   # Check Codex auth: any of CTI_CODEX_API_KEY / CODEX_API_KEY / OPENAI_API_KEY,
   # or a successful login status command on either the old or new CLI.
   CODEX_AUTH=1
-  if [ -n "${CTI_CODEX_API_KEY:-}" ] || [ -n "${CODEX_API_KEY:-}" ] || [ -n "${OPENAI_API_KEY:-}" ]; then
+  if [ -n "${CTI_CODEX_API_KEY:-}" ] || [ -n "${CODEX_API_KEY:-}" ] || [ -n "${OPENAI_API_KEY:-}" ] \
+    || [ -n "$(get_config CTI_CODEX_API_KEY)" ] || [ -n "$(get_config CODEX_API_KEY)" ] || [ -n "$(get_config OPENAI_API_KEY)" ]; then
     CODEX_AUTH=0
+  elif [ -n "$CODEX_EXE" ] && [ -x "$CODEX_EXE" ]; then
+    CODEX_AUTH_OUT=$("$CODEX_EXE" login status 2>&1 || "$CODEX_EXE" auth status 2>&1 || true)
+    if echo "$CODEX_AUTH_OUT" | grep -qiE 'logged.in|authenticated'; then
+      CODEX_AUTH=0
+    fi
   elif command -v codex &>/dev/null; then
     CODEX_AUTH_OUT=$(codex login status 2>&1 || codex auth status 2>&1 || true)
     if echo "$CODEX_AUTH_OUT" | grep -qiE 'logged.in|authenticated'; then
@@ -275,7 +293,7 @@ fi
 # --- dist/daemon.mjs freshness ---
 DAEMON_MJS="$SKILL_DIR/dist/daemon.mjs"
 if [ -f "$DAEMON_MJS" ]; then
-  STALE_SRC=$(find "$SKILL_DIR/src" -name '*.ts' -newer "$DAEMON_MJS" 2>/dev/null | head -1)
+  STALE_SRC=$(find "$SKILL_DIR/src" -name '*.ts' ! -name 'windows-watchdog.ts' -newer "$DAEMON_MJS" 2>/dev/null | head -1)
   if [ -z "$STALE_SRC" ]; then
     check "dist/daemon.mjs is up to date" 0
   else
@@ -283,6 +301,16 @@ if [ -f "$DAEMON_MJS" ]; then
   fi
 else
   check "dist/daemon.mjs exists (not built — run 'npm run build')" 1
+fi
+
+WATCHDOG_MJS="$SKILL_DIR/dist/windows-watchdog.mjs"
+if [ -f "$WATCHDOG_MJS" ]; then
+  STALE_WATCHDOG_SRC=$(find "$SKILL_DIR/src" -name 'windows-watchdog.ts' -newer "$WATCHDOG_MJS" 2>/dev/null | head -1)
+  if [ -z "$STALE_WATCHDOG_SRC" ]; then
+    check "dist/windows-watchdog.mjs is up to date" 0
+  else
+    check "dist/windows-watchdog.mjs is stale (src changed, run 'npm run build')" 1
+  fi
 fi
 
 # --- config.env exists ---

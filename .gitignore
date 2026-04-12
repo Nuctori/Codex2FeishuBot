@@ -1,11 +1,4 @@
 node_modules/*
-!node_modules/claude-to-im/
-!node_modules/claude-to-im/src/
-!node_modules/claude-to-im/src/**
-!node_modules/claude-to-im/LICENSE
-!node_modules/claude-to-im/package.json
-!node_modules/claude-to-im/README.md
-!node_modules/claude-to-im/README.zh-CN.md
 dist/
 *.tgz
 .env

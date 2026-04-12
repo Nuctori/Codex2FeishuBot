@@ -39,25 +39,28 @@ if [ "${1:-}" = "--link" ]; then
   ln -s "$SOURCE_DIR" "$TARGET_DIR"
   echo "Symlinked: $TARGET_DIR → $SOURCE_DIR"
 else
-  cp -R "$SOURCE_DIR" "$TARGET_DIR"
+  mkdir -p "$TARGET_DIR"
+  tar \
+    --exclude='.git' \
+    --exclude='node_modules' \
+    --exclude='dist' \
+    --exclude='.DS_Store' \
+    -C "$SOURCE_DIR" \
+    -cf - . | tar -C "$TARGET_DIR" -xf -
   echo "Copied to: $TARGET_DIR"
 fi
 
-# Ensure dependencies (need devDependencies for build step)
-if [ ! -d "$TARGET_DIR/node_modules" ] || [ ! -d "$TARGET_DIR/node_modules/@openai/codex-sdk" ]; then
+# Ensure dependencies (keep devDependencies so linked/dev installs remain buildable)
+if [ ! -d "$TARGET_DIR/node_modules" ]; then
   echo "Installing dependencies..."
   (cd "$TARGET_DIR" && npm install)
 fi
 
 # Ensure build
-if [ ! -f "$TARGET_DIR/dist/daemon.mjs" ]; then
+if [ ! -f "$TARGET_DIR/dist/daemon.mjs" ] || [ ! -f "$TARGET_DIR/dist/windows-watchdog.mjs" ]; then
   echo "Building daemon bundle..."
   (cd "$TARGET_DIR" && npm run build)
 fi
-
-# Prune devDependencies after build
-echo "Pruning dev dependencies..."
-(cd "$TARGET_DIR" && npm prune --production)
 
 echo ""
 echo "Done! Start a new Codex session and use:"

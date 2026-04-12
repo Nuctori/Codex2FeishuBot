@@ -8,13 +8,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
-import { initBridgeContext } from '../node_modules/claude-to-im/src/lib/bridge/context.js';
-import * as bridgeManager from '../node_modules/claude-to-im/src/lib/bridge/bridge-manager.js';
+import { initBridgeContext } from './bridge/context.js';
+import * as bridgeManager from './bridge/bridge-manager.js';
 // Side-effect import to trigger adapter self-registration
-import '../node_modules/claude-to-im/src/lib/bridge/adapters/index.js';
+import './bridge/adapters/index.js';
 import './adapters/weixin-adapter.js';
 
-import type { LLMProvider } from '../node_modules/claude-to-im/src/lib/bridge/host.js';
+import type { LLMProvider } from './bridge/host.js';
 import { loadConfig, configToSettings, CTI_HOME } from './config.js';
 import type { Config } from './config.js';
 import { JsonFileStore } from './store.js';

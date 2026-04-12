@@ -307,6 +307,12 @@ Additional notes:
     └── status.json         ← Current status
 ```
 
+### Release notes
+
+- The bridge runtime shipped by this repo now lives under `src/bridge`, so published builds do not depend on private source files inside `node_modules/claude-to-im/src/...`.
+- Platform-specific behavior is limited to thin process-hosting layers such as `scripts/supervisor-windows.ps1`, `scripts/daemon.sh`, and `src/windows-watchdog.ts`.
+- Session routing, Feishu navigation cards, permission handling, and message delivery stay inside the shared bridge/runtime layer, which keeps the business logic portable across platforms.
+
 ### Key components
 
 | Component | Role |

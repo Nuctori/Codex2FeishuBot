@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
+
 CTI_HOME="${CTI_HOME:-$HOME/.claude-to-im}"
 SKILL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PID_FILE="$CTI_HOME/runtime/bridge.pid"
 STATUS_FILE="$CTI_HOME/runtime/status.json"
 LOG_FILE="$CTI_HOME/logs/bridge.log"
+CONFIG_ENV_HELPER="$SKILL_DIR/scripts/config-env.mjs"
 
-# ── Common helpers ──
+# Common helpers
 
 ensure_dirs() { mkdir -p "$CTI_HOME"/{data,logs,runtime,data/messages}; }
 
@@ -15,22 +17,23 @@ ensure_built() {
   if [ ! -f "$SKILL_DIR/dist/daemon.mjs" ]; then
     need_build=1
   else
-    # Check if any source file is newer than the bundle
+    # Check if any source file is newer than the bundle.
     local newest_src
     newest_src=$(find "$SKILL_DIR/src" -name '*.ts' -newer "$SKILL_DIR/dist/daemon.mjs" 2>/dev/null | head -1)
     if [ -n "$newest_src" ]; then
       need_build=1
     fi
-    # Also check if node_modules/claude-to-im was updated (npm update)
-    # — its code is bundled into dist, so changes require a rebuild
-    if [ "$need_build" = "0" ] && [ -d "$SKILL_DIR/node_modules/claude-to-im/src" ]; then
-      local newest_dep
-      newest_dep=$(find "$SKILL_DIR/node_modules/claude-to-im/src" -name '*.ts' -newer "$SKILL_DIR/dist/daemon.mjs" 2>/dev/null | head -1)
-      if [ -n "$newest_dep" ]; then
+
+    # Check vendored bridge sources too, because they are bundled into dist.
+    if [ "$need_build" = "0" ] && [ -d "$SKILL_DIR/src/bridge" ]; then
+      local newest_bridge
+      newest_bridge=$(find "$SKILL_DIR/src/bridge" -name '*.ts' -newer "$SKILL_DIR/dist/daemon.mjs" 2>/dev/null | head -1)
+      if [ -n "$newest_bridge" ]; then
         need_build=1
       fi
     fi
   fi
+
   if [ "$need_build" = "1" ]; then
     echo "Building daemon bundle..."
     (cd "$SKILL_DIR" && npm run build)
@@ -42,7 +45,10 @@ clean_env() {
   unset CLAUDECODE 2>/dev/null || true
 
   local runtime
-  runtime=$(grep "^CTI_RUNTIME=" "$CTI_HOME/config.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d "'" | tr -d '"' || true)
+  runtime="${CTI_RUNTIME:-}"
+  if [ -z "$runtime" ]; then
+    runtime=$(get_config_value "CTI_RUNTIME")
+  fi
   runtime="${runtime:-claude}"
 
   local mode="${CTI_ENV_ISOLATION:-inherit}"
@@ -54,17 +60,33 @@ clean_env() {
         done < <(env)
         ;;
       claude)
-        # Keep ANTHROPIC_* (from config.env) — needed for third-party API providers.
+        # Keep ANTHROPIC_* from config.env for third-party API providers.
         # Strip OPENAI_* to avoid cross-runtime leakage.
         while IFS='=' read -r name _; do
           case "$name" in OPENAI_*) unset "$name" 2>/dev/null || true ;; esac
         done < <(env)
         ;;
       auto)
-        # Keep both ANTHROPIC_* and OPENAI_* for auto mode
+        # Keep both ANTHROPIC_* and OPENAI_* for auto mode.
         ;;
     esac
   fi
+}
+
+get_config_value() {
+  local key="$1"
+  [ -f "$CTI_HOME/config.env" ] || return 0
+  node "$CONFIG_ENV_HELPER" get "$CTI_HOME/config.env" "$key" 2>/dev/null || true
+}
+
+load_config_env() {
+  [ -f "$CTI_HOME/config.env" ] || return 0
+
+  while IFS= read -r -d '' entry; do
+    local name="${entry%%=*}"
+    local value="${entry#*=}"
+    export "$name=$value"
+  done < <(node "$CONFIG_ENV_HELPER" export-nul "$CTI_HOME/config.env" CTI_ OPENAI_ CODEX_ ANTHROPIC_)
 }
 
 read_pid() {
@@ -99,7 +121,7 @@ show_failure_help() {
   echo "  3. Rebuild bundle:   cd \"$SKILL_DIR\" && npm run build"
 }
 
-# ── Load platform-specific supervisor ──
+# Load platform-specific supervisor
 
 case "$(uname -s)" in
   Darwin)
@@ -107,7 +129,6 @@ case "$(uname -s)" in
     source "$SKILL_DIR/scripts/supervisor-macos.sh"
     ;;
   MINGW*|MSYS*|CYGWIN*)
-    # Windows detected via Git Bash / MSYS2 / Cygwin — delegate to PowerShell
     echo "Windows detected. Delegating to supervisor-windows.ps1..."
     powershell.exe -ExecutionPolicy Bypass -File "$SKILL_DIR/scripts/supervisor-windows.ps1" "$@"
     exit $?
@@ -118,14 +139,13 @@ case "$(uname -s)" in
     ;;
 esac
 
-# ── Commands ──
+# Commands
 
 case "${1:-help}" in
   start)
     ensure_dirs
     ensure_built
 
-    # Check if already running (supervisor-aware: launchctl on macOS, PID on Linux)
     if supervisor_is_running; then
       EXISTING_PID=$(read_pid)
       echo "Bridge already running${EXISTING_PID:+ (PID: $EXISTING_PID)}"
@@ -133,15 +153,11 @@ case "${1:-help}" in
       exit 1
     fi
 
-    # Source config.env BEFORE clean_env so that CTI_ANTHROPIC_PASSTHROUGH
-    # and other CTI_* flags are available when clean_env checks them.
-    [ -f "$CTI_HOME/config.env" ] && set -a && source "$CTI_HOME/config.env" && set +a
-
+    load_config_env
     clean_env
     echo "Starting bridge..."
     supervisor_start
 
-    # Poll for up to 10 seconds waiting for status.json to report running
     STARTED=false
     for _ in $(seq 1 10); do
       sleep 1
@@ -149,7 +165,6 @@ case "${1:-help}" in
         STARTED=true
         break
       fi
-      # If supervisor process already died, stop waiting
       if ! supervisor_is_running; then
         break
       fi
@@ -193,14 +208,11 @@ case "${1:-help}" in
     ;;
 
   status)
-    # Platform-specific status info (prints launchd/service state)
     supervisor_status_extra
 
-    # Process status: supervisor-aware (launchctl on macOS, PID on Linux)
     if supervisor_is_running; then
       PID=$(read_pid)
       echo "Bridge process is running${PID:+ (PID: $PID)}"
-      # Business status from status.json
       if status_running; then
         echo "Bridge status: running"
       else

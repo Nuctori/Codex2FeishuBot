@@ -1,16 +1,12 @@
 import * as esbuild from 'esbuild';
 
-await esbuild.build({
-  entryPoints: ['src/main.ts'],
+const shared = {
   bundle: true,
   platform: 'node',
   format: 'esm',
   target: 'node20',
-  outfile: 'dist/daemon.mjs',
   external: [
-    // SDK must stay external — it spawns a CLI subprocess and resolves
-    // dist/cli.js relative to its own package location. Bundling it
-    // breaks that path resolution.
+    // SDK must stay external: it resolves its own CLI assets at runtime.
     '@anthropic-ai/claude-agent-sdk',
     '@openai/codex-sdk',
     // discord.js optional native deps
@@ -20,7 +16,22 @@ await esbuild.build({
     'stream', 'events', 'url', 'util', 'child_process', 'worker_threads',
     'node:*',
   ],
-  banner: { js: "import { createRequire } from 'module'; const require = createRequire(import.meta.url);" },
+  banner: {
+    js: "import { createRequire } from 'module'; const require = createRequire(import.meta.url);",
+  },
+};
+
+await esbuild.build({
+  ...shared,
+  entryPoints: ['src/main.ts'],
+  outfile: 'dist/daemon.mjs',
+});
+
+await esbuild.build({
+  ...shared,
+  entryPoints: ['src/windows-watchdog.ts'],
+  outfile: 'dist/windows-watchdog.mjs',
 });
 
 console.log('Built dist/daemon.mjs');
+console.log('Built dist/windows-watchdog.mjs');

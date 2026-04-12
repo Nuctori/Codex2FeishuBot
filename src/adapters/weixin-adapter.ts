@@ -4,9 +4,9 @@ import type {
   InboundMessage,
   OutboundMessage,
   SendResult,
-} from 'claude-to-im/src/lib/bridge/types.js';
-import { BaseChannelAdapter, registerAdapterFactory } from 'claude-to-im/src/lib/bridge/channel-adapter.js';
-import { getBridgeContext } from 'claude-to-im/src/lib/bridge/context.js';
+} from '../bridge/types.js';
+import { BaseChannelAdapter, registerAdapterFactory } from '../bridge/channel-adapter.js';
+import { getBridgeContext } from '../bridge/context.js';
 import {
   getWeixinAccount,
   getWeixinContextToken,

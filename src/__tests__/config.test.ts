@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { maskSecret, configToSettings, type Config } from '../config.js';
+import { maskSecret, configToSettings, normalizeFeishuDomain, type Config } from '../config.js';
 
 // ── maskSecret ──
 
@@ -80,12 +80,12 @@ describe('configToSettings', () => {
       enabledChannels: ['feishu'],
       feishuAppId: 'app-id',
       feishuAppSecret: 'app-secret',
-      feishuDomain: 'example.com',
+      feishuDomain: 'https://open.larksuite.com',
       feishuAllowedUsers: ['fu1'],
     });
     assert.equal(m.get('bridge_feishu_app_id'), 'app-id');
     assert.equal(m.get('bridge_feishu_app_secret'), 'app-secret');
-    assert.equal(m.get('bridge_feishu_domain'), 'example.com');
+    assert.equal(m.get('bridge_feishu_domain'), 'lark');
     assert.equal(m.get('bridge_feishu_allowed_users'), 'fu1');
   });
 
@@ -175,6 +175,21 @@ describe('configToSettings', () => {
     assert.equal(m.has('telegram_bot_token'), false);
     assert.equal(m.has('bridge_discord_bot_token'), false);
     assert.equal(m.has('bridge_feishu_app_id'), false);
+  });
+});
+
+describe('normalizeFeishuDomain', () => {
+  it('normalizes Feishu and Lark aliases plus URL-like values', () => {
+    assert.equal(normalizeFeishuDomain('feishu'), 'feishu');
+    assert.equal(normalizeFeishuDomain('https://open.feishu.cn'), 'feishu');
+    assert.equal(normalizeFeishuDomain('lark'), 'lark');
+    assert.equal(normalizeFeishuDomain('https://open.larksuite.com'), 'lark');
+  });
+
+  it('returns undefined for empty or unknown values', () => {
+    assert.equal(normalizeFeishuDomain(undefined), undefined);
+    assert.equal(normalizeFeishuDomain(''), undefined);
+    assert.equal(normalizeFeishuDomain('example.com'), undefined);
   });
 });
 

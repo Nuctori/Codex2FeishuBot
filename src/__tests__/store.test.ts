@@ -401,6 +401,66 @@ describe('JsonFileStore', () => {
     assert.ok(olderSession?.archived_at);
   });
 
+  it('updateSdkSessionId rewrites dock state when a duplicate mirror is merged at runtime', () => {
+    const store = new JsonFileStore(makeSettings());
+    const older = store.createSession('older', 'model', undefined, '/tmp/old');
+    store.updateSdkSessionId(older.id, 'sdk-dup');
+
+    const current = store.createSession('current', 'model', undefined, '/tmp/new');
+    const binding = store.upsertChannelBinding({
+      channelType: 'telegram',
+      chatId: '1',
+      codepilotSessionId: older.id,
+      workingDirectory: '/tmp/old',
+      model: 'model',
+    });
+    store.updateChannelBinding(binding.id, {
+      openSessionIds: [older.id, current.id],
+      sessionSeenCounts: {
+        [older.id]: 5,
+        [current.id]: 1,
+      },
+    } as any);
+
+    store.updateSdkSessionId(current.id, 'sdk-dup');
+
+    const rebound = store.getChannelBinding('telegram', '1') as any;
+    assert.equal(rebound?.codepilotSessionId, current.id);
+    assert.deepEqual(rebound?.openSessionIds, [current.id]);
+    assert.equal(rebound?.sessionSeenCounts?.[current.id], 5);
+    assert.equal(rebound?.sessionSeenCounts?.[older.id], undefined);
+  });
+
+  it('updateSdkSessionId does not merge unrelated sessions when clearing stale sdk session ids', () => {
+    const store = new JsonFileStore(makeSettings());
+    const stale = store.createSession('stale', 'model', undefined, '/tmp/stale');
+    store.addMessage(stale.id, 'user', 'stale user');
+    store.updateSdkSessionId(stale.id, 'sdk-stale');
+    store.updateSdkSessionId(stale.id, '');
+    store.upsertChannelBinding({
+      channelType: 'telegram',
+      chatId: '1',
+      codepilotSessionId: stale.id,
+      workingDirectory: '/tmp/stale',
+      model: 'model',
+    });
+
+    const current = store.createSession('current', 'model', undefined, '/tmp/current');
+    store.addMessage(current.id, 'user', 'current user');
+
+    store.updateSdkSessionId(current.id, '');
+
+    const binding = store.getChannelBinding('telegram', '1');
+    const staleSession = store.getSession(stale.id) as { archived_at?: string } | null;
+    const currentSession = store.getSession(current.id) as { archived_at?: string } | null;
+
+    assert.equal(binding?.codepilotSessionId, stale.id);
+    assert.equal(store.getMessages(stale.id).messages.length, 1);
+    assert.equal(store.getMessages(current.id).messages.length, 1);
+    assert.equal(staleSession?.archived_at, undefined);
+    assert.equal(currentSession?.archived_at, undefined);
+  });
+
   it('loadAll normalizes existing duplicate sdk mirrors and rewrites dock state', () => {
     const messagesDir = path.join(DATA_DIR, 'messages');
     fs.mkdirSync(messagesDir, { recursive: true });

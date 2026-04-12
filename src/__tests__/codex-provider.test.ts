@@ -785,6 +785,55 @@ describe('CodexProvider', () => {
     assert.ok(resultEvent, 'Retry success should emit result');
   });
 
+  it('retries with a fresh thread when apply_patch verification fails before any events', async () => {
+    const { CodexProvider } = await import('../codex-provider.js');
+    const { PendingPermissions } = await import('../permission-gateway.js');
+    const provider = new CodexProvider(new PendingPermissions());
+
+    let resumeCalls = 0;
+    let startCalls = 0;
+    const resumeThread = {
+      runStreamed: async () => {
+        throw new Error(
+          'apply_patch verification failed: Failed to find expected lines in src/example.ts',
+        );
+      },
+    };
+    const freshThread = {
+      runStreamed: () => ({
+        events: (async function* () {
+          yield { type: 'turn.completed', usage: { input_tokens: 1, output_tokens: 1, cached_input_tokens: 0 } };
+        })(),
+      }),
+    };
+
+    (provider as any).sdk = { Codex: class { constructor() {} } };
+    (provider as any).codex = {
+      resumeThread: () => {
+        resumeCalls += 1;
+        return resumeThread;
+      },
+      startThread: () => {
+        startCalls += 1;
+        return freshThread;
+      },
+    };
+
+    const stream = provider.streamChat({
+      prompt: 'retry stale patch session',
+      sessionId: 'patch-retry-session',
+      sdkSessionId: 'codex-stale-thread-id',
+    });
+
+    const chunks = await collectStream(stream);
+    const events = parseSSEChunks(chunks);
+
+    assert.equal(resumeCalls, 1);
+    assert.equal(startCalls, 1);
+    assert.ok(!events.find(e => e.type === 'error'));
+    assert.ok(events.find(e => e.type === 'result'));
+  });
+
   it('passes abort signal to runStreamed', async () => {
     const { CodexProvider } = await import('../codex-provider.js');
     const { PendingPermissions } = await import('../permission-gateway.js');
@@ -868,6 +917,45 @@ describe('CodexProvider', () => {
     } finally {
       restoreEnv('CTI_CODEX_FIRST_EVENT_TIMEOUT_MS', oldTimeout);
     }
+  });
+
+  it('clears the in-memory thread id after a stale patch verification error mid-stream', async () => {
+    const { CodexProvider } = await import('../codex-provider.js');
+    const { PendingPermissions } = await import('../permission-gateway.js');
+    const provider = new CodexProvider(new PendingPermissions());
+
+    (provider as any).threadIds.set('stale-session', 'codex-stale-thread-id');
+
+    const staleThread = {
+      runStreamed: () => ({
+        events: (async function* () {
+          yield { type: 'thread.started', thread_id: 'codex-stale-thread-id' };
+          throw new Error(
+            'apply_patch verification failed: Failed to find expected lines in src/example.ts',
+          );
+        })(),
+      }),
+    };
+
+    (provider as any).sdk = { Codex: class { constructor() {} } };
+    (provider as any).codex = {
+      resumeThread: () => staleThread,
+      startThread: () => staleThread,
+    };
+
+    const stream = provider.streamChat({
+      prompt: 'continue stale thread',
+      sessionId: 'stale-session',
+      sdkSessionId: 'codex-stale-thread-id',
+    });
+
+    const chunks = await collectStream(stream);
+    const events = parseSSEChunks(chunks);
+    const errorEvent = events.find(e => e.type === 'error');
+
+    assert.equal((provider as any).threadIds.has('stale-session'), false);
+    assert.ok(errorEvent, 'Should emit an error after stale patch mismatch');
+    assert.match(errorEvent!.data, /context drifted and was reset/i);
   });
 });
 

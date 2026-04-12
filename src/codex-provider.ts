@@ -272,6 +272,17 @@ function shouldRetryFreshThread(message: string): boolean {
   );
 }
 
+function shouldResetThreadStateOnError(message: string): boolean {
+  const lower = message.toLowerCase();
+  return (
+    shouldRetryFreshThread(message) ||
+    lower.includes('apply_patch verification failed') ||
+    lower.includes('failed to find expected lines') ||
+    (lower.includes('verification failed') && lower.includes('apply_patch')) ||
+    (lower.includes('patch') && lower.includes('expected lines'))
+  );
+}
+
 function parseTomlString(line: string): string | undefined {
   const match = line.match(/=\s*"([^"]*)"/);
   return match?.[1];
@@ -644,11 +655,20 @@ export class CodexProvider implements LLMProvider {
                   self.threadIds.delete(params.sessionId);
                   throw new Error(timeoutMessage);
                 }
-                if (savedThreadId && !retryFresh && !sawAnyEvent && shouldRetryFreshThread(message)) {
+                const shouldResetThread = shouldResetThreadStateOnError(message);
+                if (shouldResetThread) {
+                  self.threadIds.delete(params.sessionId);
+                }
+                if (savedThreadId && !retryFresh && !sawAnyEvent && shouldResetThread) {
                   console.warn('[codex-provider] Resume failed, retrying with a fresh thread:', message);
                   savedThreadId = undefined;
                   retryFresh = true;
                   continue;
+                }
+                if (shouldResetThread && sawAnyEvent) {
+                  throw new Error(
+                    `Codex session context drifted and was reset. Please retry the request.\n${message}`,
+                  );
                 }
                 throw err;
               }

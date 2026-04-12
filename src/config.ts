@@ -39,6 +39,15 @@ export interface Config {
 export const CTI_HOME = process.env.CTI_HOME || path.join(os.homedir(), ".claude-to-im");
 export const CONFIG_PATH = path.join(CTI_HOME, "config.env");
 
+export function normalizeFeishuDomain(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  const normalized = trimmed.toLowerCase();
+  if (normalized === "lark" || normalized.includes("larksuite")) return "lark";
+  if (normalized === "feishu" || normalized.includes("feishu")) return "feishu";
+  return undefined;
+}
+
 function hydrateProcessEnv(entries: Map<string, string>): void {
   for (const [key, value] of entries) {
     if (!/^(CTI_|OPENAI_|CODEX_|ANTHROPIC_)/.test(key)) continue;
@@ -101,7 +110,7 @@ export function loadConfig(): Config {
     tgAllowedUsers: splitCsv(env.get("CTI_TG_ALLOWED_USERS")),
     feishuAppId: env.get("CTI_FEISHU_APP_ID") || undefined,
     feishuAppSecret: env.get("CTI_FEISHU_APP_SECRET") || undefined,
-    feishuDomain: env.get("CTI_FEISHU_DOMAIN") || undefined,
+    feishuDomain: normalizeFeishuDomain(env.get("CTI_FEISHU_DOMAIN")),
     feishuAllowedUsers: splitCsv(env.get("CTI_FEISHU_ALLOWED_USERS")),
     discordBotToken: env.get("CTI_DISCORD_BOT_TOKEN") || undefined,
     discordAllowedUsers: splitCsv(env.get("CTI_DISCORD_ALLOWED_USERS")),
@@ -150,7 +159,7 @@ export function saveConfig(config: Config): void {
   );
   out += formatEnvLine("CTI_FEISHU_APP_ID", config.feishuAppId);
   out += formatEnvLine("CTI_FEISHU_APP_SECRET", config.feishuAppSecret);
-  out += formatEnvLine("CTI_FEISHU_DOMAIN", config.feishuDomain);
+  out += formatEnvLine("CTI_FEISHU_DOMAIN", normalizeFeishuDomain(config.feishuDomain));
   out += formatEnvLine(
     "CTI_FEISHU_ALLOWED_USERS",
     config.feishuAllowedUsers?.join(",")
@@ -243,7 +252,8 @@ export function configToSettings(config: Config): Map<string, string> {
   if (config.feishuAppId) m.set("bridge_feishu_app_id", config.feishuAppId);
   if (config.feishuAppSecret)
     m.set("bridge_feishu_app_secret", config.feishuAppSecret);
-  if (config.feishuDomain) m.set("bridge_feishu_domain", config.feishuDomain);
+  const normalizedFeishuDomain = normalizeFeishuDomain(config.feishuDomain);
+  if (normalizedFeishuDomain) m.set("bridge_feishu_domain", normalizedFeishuDomain);
   if (config.feishuAllowedUsers)
     m.set("bridge_feishu_allowed_users", config.feishuAllowedUsers.join(","));
 

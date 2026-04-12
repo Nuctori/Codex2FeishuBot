@@ -635,6 +635,31 @@ export class JsonFileStore implements BridgeStore {
     session.archived_at = archivedAt;
     session.updated_at = archivedAt;
     this.persistSessions();
+
+    let bindingsChanged = false;
+    for (const [key, binding] of this.bindings) {
+      const dockState = getDockState(binding);
+      const nextOpenSessionIds = (dockState.openSessionIds ?? []).filter((id) => id !== sessionId);
+      const nextSeenCounts = { ...(dockState.sessionSeenCounts ?? {}) };
+      delete nextSeenCounts[sessionId];
+
+      if (
+        JSON.stringify(nextOpenSessionIds) !== JSON.stringify(dockState.openSessionIds ?? [])
+        || JSON.stringify(nextSeenCounts) !== JSON.stringify(dockState.sessionSeenCounts ?? {})
+      ) {
+        this.bindings.set(key, {
+          ...binding,
+          openSessionIds: nextOpenSessionIds,
+          sessionSeenCounts: nextSeenCounts,
+          updatedAt: archivedAt,
+        } as ChannelBinding);
+        bindingsChanged = true;
+      }
+    }
+
+    if (bindingsChanged) {
+      this.persistBindings();
+    }
   }
 
   listSessions(): BridgeSession[] {
@@ -709,10 +734,13 @@ export class JsonFileStore implements BridgeStore {
     const s = this.sessions.get(sessionId);
     if (!s) return;
 
-    const duplicate = Array.from(this.sessions.values()).find((session) => {
-      if (session.id === sessionId || session.archived_at) return false;
-      return (session as unknown as Record<string, unknown>)['sdk_session_id'] === sdkSessionId;
-    }) as StoredBridgeSession | undefined;
+    const normalizedSdkSessionId = sdkSessionId.trim() || undefined;
+    const duplicate = normalizedSdkSessionId
+      ? Array.from(this.sessions.values()).find((session) => {
+        if (session.id === sessionId || session.archived_at) return false;
+        return getStoredSdkSessionId(session) === normalizedSdkSessionId;
+      }) as StoredBridgeSession | undefined
+      : undefined;
 
     if (duplicate) {
       this.mergeSessionMessages(sessionId, duplicate.id);
@@ -723,24 +751,12 @@ export class JsonFileStore implements BridgeStore {
       s.created_at = pickEarlierTimestamp(s.created_at, duplicate.created_at);
       s.updated_at = pickLaterTimestamp(s.updated_at, duplicate.updated_at) || now();
 
-      for (const [key, binding] of this.bindings) {
-        if (binding.codepilotSessionId === duplicate.id) {
-          this.bindings.set(key, {
-            ...binding,
-            codepilotSessionId: sessionId,
-            sdkSessionId,
-            workingDirectory: s.working_directory,
-            model: s.model,
-            updatedAt: now(),
-          });
-        }
-      }
-
       duplicate.archived_at = now();
       duplicate.updated_at = duplicate.archived_at;
+      this.rewriteBindingsForMergedSession(s, duplicate);
     }
 
-    (s as unknown as Record<string, unknown>)['sdk_session_id'] = sdkSessionId;
+    (s as unknown as Record<string, unknown>)['sdk_session_id'] = normalizedSdkSessionId ?? '';
     s.updated_at = pickLaterTimestamp(s.updated_at, now()) || now();
     this.persistSessions();
 

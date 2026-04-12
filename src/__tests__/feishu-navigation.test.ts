@@ -1164,6 +1164,33 @@ describe('Feishu navigation cards', () => {
     assert.match(sends.at(-1)!.text, /Current Session|当前会话/);
   });
 
+  it('clears stale sdk session ids from both binding and session after an error update', () => {
+    const store = new JsonFileStore(makeSettings());
+    initTestContext(store);
+
+    const current = store.createSession('Bridge current', 'gpt-5', undefined, 'D:\\lua\\fireBookStore-backend\\firebookstore-dotnet');
+    store.updateSdkSessionId(current.id, '019d7fe8-b40f-71a0-863c-898605508a34');
+
+    const binding = store.upsertChannelBinding({
+      channelType: 'feishu',
+      chatId: 'chat-1',
+      codepilotSessionId: current.id,
+      sdkSessionId: '019d7fe8-b40f-71a0-863c-898605508a34',
+      workingDirectory: 'D:\\lua\\fireBookStore-backend\\firebookstore-dotnet',
+      model: 'gpt-5',
+    });
+
+    bridgeTestOnly.applySdkSessionUpdate(binding, '');
+
+    const clearedBinding = store.getChannelBinding('feishu', 'chat-1') as any;
+    const clearedSession = store.getSession(current.id) as any;
+    assert.equal(clearedBinding?.sdkSessionId, '');
+    assert.equal(clearedSession?.sdk_session_id, '');
+
+    bridgeTestOnly.buildFeishuStatusCard(clearedBinding);
+    assert.equal((store.getChannelBinding('feishu', 'chat-1') as any)?.sdkSessionId, '');
+  });
+
   it('does not send a second reply card after a streaming card finalized', async () => {
     const store = new JsonFileStore(makeSettings());
     initBridgeContext({

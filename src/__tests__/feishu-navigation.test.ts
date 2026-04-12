@@ -6,6 +6,7 @@ import path from 'node:path';
 import { FeishuAdapter } from '../../node_modules/claude-to-im/src/lib/bridge/adapters/feishu-adapter.js';
 import { initBridgeContext } from '../../node_modules/claude-to-im/src/lib/bridge/context.js';
 import { _testOnly as bridgeTestOnly } from '../../node_modules/claude-to-im/src/lib/bridge/bridge-manager.js';
+import { buildToolProgressMarkdown } from '../../node_modules/claude-to-im/src/lib/bridge/markdown/feishu.js';
 
 import { CTI_HOME } from '../config.js';
 import { JsonFileStore } from '../store.js';
@@ -735,6 +736,33 @@ describe('Feishu navigation cards', () => {
     assert.equal(result.messageId, 'om_xxx');
     assert.equal(patchCalls.length, 1);
     assert.equal(createCalls, 0);
+  });
+
+  it('aggregates repeated Bash tool calls into a compact progress summary', () => {
+    const markdown = buildToolProgressMarkdown([
+      { id: 'tool-1', name: 'Bash', status: 'complete' },
+      { id: 'tool-2', name: 'Bash', status: 'complete' },
+      { id: 'tool-3', name: 'Bash', status: 'complete' },
+      { id: 'tool-4', name: 'Bash', status: 'complete' },
+      { id: 'tool-5', name: 'Bash', status: 'complete' },
+      { id: 'tool-6', name: 'Bash', status: 'complete' },
+      { id: 'tool-7', name: 'Bash', status: 'complete' },
+      { id: 'tool-8', name: 'Bash', status: 'error' },
+    ]);
+
+    assert.match(markdown, /`Bash` x8/);
+    assert.match(markdown, /7 (ok|成功)/);
+    assert.match(markdown, /1 (failed|失败)/);
+    assert.equal((markdown.match(/`Bash`/g) || []).length, 1);
+  });
+
+  it('shows the command summary for a single tool call', () => {
+    const markdown = buildToolProgressMarkdown([
+      { id: 'tool-1', name: 'Bash', status: 'complete', summary: 'git status --short' },
+    ]);
+
+    assert.match(markdown, /`Bash`/);
+    assert.match(markdown, /git status --short/);
   });
 
   it('does not create a second card when an in-place update fails', async () => {

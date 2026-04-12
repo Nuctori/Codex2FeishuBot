@@ -85,6 +85,29 @@ function Test-StatusRunning {
     return $json.running -eq $true
 }
 
+function Write-StoppedStatus {
+    param([string]$Reason = 'stopped')
+
+    $status = @{}
+    if (Test-Path $StatusFile) {
+        try {
+            $existing = Get-Content $StatusFile -Raw | ConvertFrom-Json -ErrorAction Stop
+            foreach ($prop in $existing.PSObject.Properties) {
+                $status[$prop.Name] = $prop.Value
+            }
+        } catch {
+            $status = @{}
+        }
+    }
+
+    $status.running = $false
+    $status.pid = $null
+    $status.lastExitReason = $Reason
+    $status.stoppedAt = (Get-Date).ToUniversalTime().ToString('o')
+
+    $status | ConvertTo-Json -Depth 6 | Set-Content -Path $StatusFile -Encoding UTF8
+}
+
 function Show-LastExitReason {
     if (Test-Path $StatusFile) {
         $json = Get-Content $StatusFile -Raw | ConvertFrom-Json
@@ -334,14 +357,21 @@ switch ($Command) {
             Stop-Service -Name $ServiceName -Force
             Write-Host "Bridge stopped"
             if (Test-Path $PidFile) { Remove-Item $PidFile -Force }
+            Write-StoppedStatus -Reason 'stopped'
         } else {
             $bridgePid = Read-Pid
-            if (-not $bridgePid) { Write-Host "No bridge running"; exit 0 }
+            if (-not $bridgePid) {
+                Write-Host "No bridge running"
+                Write-StoppedStatus -Reason 'not_running'
+                exit 0
+            }
             if (Test-PidAlive $bridgePid) {
                 Stop-Process -Id ([int]$bridgePid) -Force
                 Write-Host "Bridge stopped"
+                Write-StoppedStatus -Reason 'stopped'
             } else {
                 Write-Host "Bridge was not running (stale PID file)"
+                Write-StoppedStatus -Reason 'stale_pid'
             }
             if (Test-Path $PidFile) { Remove-Item $PidFile -Force }
         }
@@ -367,6 +397,7 @@ switch ($Command) {
         } else {
             Write-Host "Bridge is not running"
             if (Test-Path $PidFile) { Remove-Item $PidFile -Force }
+            Write-StoppedStatus -Reason 'not_running'
             Show-LastExitReason
         }
     }

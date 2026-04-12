@@ -203,6 +203,53 @@ describe('Feishu navigation cards', () => {
     assert.equal(groups[0].sessions[0].id, active.id);
   });
 
+  it('keeps same project path sessions separated by workspace home', () => {
+    const sharedProject = ensureDir(path.join(TEST_WORKSPACES_DIR, 'shared-project'));
+    const repoCodexHome = ensureDir(path.join(sharedProject, '.codex'));
+    writeCodexSession(
+      'aaaa1111-1111-4111-8111-111111111111',
+      'Global codex session',
+      sharedProject,
+      '2026-04-11T00:00:00.000Z',
+      [],
+      TEST_CODEX_HOME,
+    );
+    writeCodexSession(
+      'bbbb2222-2222-4222-8222-222222222222',
+      'Repo codex session',
+      sharedProject,
+      '2026-04-11T00:10:00.000Z',
+      [],
+      repoCodexHome,
+    );
+
+    const store = new JsonFileStore(makeSettings());
+    initTestContext(store);
+
+    const current = store.createSession('Bridge current', 'gpt-5', undefined, sharedProject, undefined, {
+      createdAt: '2026-04-11T00:00:00.000Z',
+      updatedAt: '2026-04-11T00:20:00.000Z',
+    });
+    const binding = store.upsertChannelBinding({
+      channelType: 'feishu',
+      chatId: 'chat-1',
+      codepilotSessionId: current.id,
+      workingDirectory: sharedProject,
+      model: 'gpt-5',
+    });
+
+    const groups = bridgeTestOnly.buildProjectGroups(binding);
+    const sharedGroups = groups.filter((group: any) => group.path === sharedProject);
+    const projectCard = bridgeTestOnly.buildFeishuProjectListCard(groups, binding, 'global');
+
+    assert.equal(sharedGroups.length, 2);
+    assert.equal(sharedGroups[0].current, true);
+    assert.equal(sharedGroups.some((group: any) => group.workspacePath === repoCodexHome), true);
+    assert.equal(sharedGroups.some((group: any) => group.workspacePath === TEST_CODEX_HOME), true);
+    assert.match(projectCard, new RegExp(bridgeTestOnly.encodeCardToken(repoCodexHome)));
+    assert.match(projectCard, new RegExp(bridgeTestOnly.encodeCardToken(TEST_CODEX_HOME)));
+  });
+
   it('discovers codex workspaces and groups them with bridge sessions', () => {
     const firebook = createWorkspaceFixture('firebook-workspace', ['firebookstore-dotnet']);
     const koishi = createWorkspaceFixture('koishi-workspace', ['KoishiNavigationWorkArea']);

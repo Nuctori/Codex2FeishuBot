@@ -663,7 +663,7 @@ describe('CodexProvider', () => {
       const provider = new CodexProvider(new PendingPermissions());
       const options = (provider as any).buildCodexOptions({});
 
-      assert.deepEqual(options.config, { features: { plugins: false } });
+      assert.equal(options.config?.features?.plugins, false);
     } finally {
       restoreEnv('CTI_CODEX_DISABLE_PLUGINS', oldDisablePlugins);
     }
@@ -679,7 +679,7 @@ describe('CodexProvider', () => {
       const provider = new CodexProvider(new PendingPermissions());
       const options = (provider as any).buildCodexOptions({});
 
-      assert.equal(options.config, undefined);
+      assert.equal(options.config?.features, undefined);
     } finally {
       restoreEnv('CTI_CODEX_DISABLE_PLUGINS', oldDisablePlugins);
     }

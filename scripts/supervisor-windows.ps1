@@ -79,10 +79,43 @@ function Test-PidAlive {
     catch { return $false }
 }
 
+function Get-StatusObject {
+    if (-not (Test-Path $StatusFile)) { return $null }
+    try {
+        return Get-Content $StatusFile -Raw | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        return $null
+    }
+}
+
+function Get-ProcessCommandLine {
+    param([string]$ProcessId)
+    if (-not $ProcessId) { return $null }
+    try {
+        return (Get-CimInstance Win32_Process -Filter "ProcessId = $([int]$ProcessId)" -ErrorAction Stop).CommandLine
+    } catch {
+        return $null
+    }
+}
+
+function Test-BridgeProcess {
+    param([string]$ProcessId)
+    if (-not (Test-PidAlive $ProcessId)) { return $false }
+    $commandLine = Get-ProcessCommandLine $ProcessId
+    if ([string]::IsNullOrWhiteSpace($commandLine)) { return $false }
+
+    $daemonPattern = [regex]::Escape($DaemonMjs)
+    return $commandLine -match $daemonPattern
+}
+
 function Test-StatusRunning {
-    if (-not (Test-Path $StatusFile)) { return $false }
-    $json = Get-Content $StatusFile -Raw | ConvertFrom-Json
-    return $json.running -eq $true
+    param([string]$ExpectedPid = $null)
+
+    $json = Get-StatusObject
+    if (-not $json) { return $false }
+    if ($json.running -ne $true) { return $false }
+    if (-not $ExpectedPid) { return $true }
+    return "$($json.pid)" -eq "$ExpectedPid"
 }
 
 function Write-StoppedStatus {
@@ -306,10 +339,14 @@ switch ($Command) {
         Ensure-Built
 
         $existingPid = Read-Pid
-        if ($existingPid -and (Test-PidAlive $existingPid)) {
+        if ($existingPid -and (Test-BridgeProcess $existingPid)) {
             Write-Host "Bridge already running (PID: $existingPid)"
             if (Test-Path $StatusFile) { Get-Content $StatusFile -Raw }
             exit 1
+        } elseif ($existingPid) {
+            Write-Host "Ignoring stale PID file (PID: $existingPid)"
+            if (Test-Path $PidFile) { Remove-Item $PidFile -Force }
+            Write-StoppedStatus -Reason 'stale_pid'
         }
 
         # Check if registered as Windows Service
@@ -320,11 +357,12 @@ switch ($Command) {
             Start-Sleep -Seconds 3
 
             $newPid = Read-Pid
-            if ($newPid -and (Test-PidAlive $newPid) -and (Test-StatusRunning)) {
+            if ($newPid -and (Test-BridgeProcess $newPid) -and (Test-StatusRunning $newPid)) {
                 Write-Host "Bridge started (PID: $newPid, managed by Windows Service)"
                 if (Test-Path $StatusFile) { Get-Content $StatusFile -Raw }
             } else {
                 Write-Host "Failed to start bridge via service."
+                Write-StoppedStatus -Reason 'start_failed'
                 Show-LastExitReason
                 Show-FailureHelp
                 exit 1
@@ -335,14 +373,15 @@ switch ($Command) {
             Start-Sleep -Seconds 3
 
             $newPid = Read-Pid
-            if ($newPid -and (Test-PidAlive $newPid) -and (Test-StatusRunning)) {
+            if ($newPid -and (Test-BridgeProcess $newPid) -and (Test-StatusRunning $newPid)) {
                 Write-Host "Bridge started (PID: $newPid)"
                 if (Test-Path $StatusFile) { Get-Content $StatusFile -Raw }
             } else {
                 Write-Host "Failed to start bridge."
-                if (-not $newPid -or -not (Test-PidAlive $newPid)) {
+                if (-not $newPid -or -not (Test-BridgeProcess $newPid)) {
                     Write-Host "  Process exited immediately."
                 }
+                Write-StoppedStatus -Reason 'start_failed'
                 Show-LastExitReason
                 Show-FailureHelp
                 exit 1
@@ -365,12 +404,16 @@ switch ($Command) {
                 Write-StoppedStatus -Reason 'not_running'
                 exit 0
             }
-            if (Test-PidAlive $bridgePid) {
+            if (Test-BridgeProcess $bridgePid) {
                 Stop-Process -Id ([int]$bridgePid) -Force
                 Write-Host "Bridge stopped"
                 Write-StoppedStatus -Reason 'stopped'
             } else {
-                Write-Host "Bridge was not running (stale PID file)"
+                if (Test-PidAlive $bridgePid) {
+                    Write-Host "Bridge PID belongs to a different process; leaving it untouched"
+                } else {
+                    Write-Host "Bridge was not running (stale PID file)"
+                }
                 Write-StoppedStatus -Reason 'stale_pid'
             }
             if (Test-Path $PidFile) { Remove-Item $PidFile -Force }
@@ -386,9 +429,9 @@ switch ($Command) {
             Write-Host "Windows Service '$ServiceName': $($svc.Status)"
         }
 
-        if ($bridgePid -and (Test-PidAlive $bridgePid)) {
+        if ($bridgePid -and (Test-BridgeProcess $bridgePid)) {
             Write-Host "Bridge process is running (PID: $bridgePid)"
-            if (Test-StatusRunning) {
+            if (Test-StatusRunning $bridgePid) {
                 Write-Host "Bridge status: running"
             } else {
                 Write-Host "Bridge status: process alive but status.json not reporting running"

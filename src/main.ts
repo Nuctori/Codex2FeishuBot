@@ -1,5 +1,5 @@
 /**
- * Daemon entry point for claude-to-im-skill.
+ * Daemon entry point for Codex ↔ Feishu.
  *
  * Assembles all DI implementations and starts the bridge.
  */

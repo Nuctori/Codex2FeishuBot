@@ -10,14 +10,14 @@ test('resolveCodexInstallPlan targets ~/.codex/skills/claude-to-im', async () =>
   const { CODEX_SKILL_NAME, resolveCodexInstallPlan } = await loadInstallHelper();
   const plan = resolveCodexInstallPlan({
     homeDir: 'C:\\Users\\Nuctori',
-    sourceDir: 'D:\\work\\Claude-to-IM-skill',
+    sourceDir: 'D:\\work\\codex-feishu-bridge',
     link: true,
   });
 
   assert.equal(plan.skillName, CODEX_SKILL_NAME);
   assert.equal(plan.codexSkillsDir, 'C:\\Users\\Nuctori\\.codex\\skills');
   assert.equal(plan.targetDir, 'C:\\Users\\Nuctori\\.codex\\skills\\claude-to-im');
-  assert.equal(plan.sourceDir, 'D:\\work\\Claude-to-IM-skill');
+  assert.equal(plan.sourceDir, 'D:\\work\\codex-feishu-bridge');
   assert.equal(plan.link, true);
 });
 

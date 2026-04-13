@@ -1273,7 +1273,7 @@ describe('Feishu navigation cards', () => {
   it('bind command accepts a discovered codex session id by creating a bridge mirror', async () => {
     writeCodexSession(
       '019d56b8-6a5a-79d1-a1a2-0bacb6f0a304',
-      'Review Claude-to-IM-skill Feishu use',
+      'Review codex-feishu-bridge Feishu use',
       'D:\\lua\\fireBookStore-backend\\firebookstore-dotnet',
     );
 
@@ -1320,7 +1320,7 @@ describe('Feishu navigation cards', () => {
 
     const mirrored = store.getSession(rebound!.codepilotSessionId) as any;
     assert.equal(mirrored?.sdk_session_id, '019d56b8-6a5a-79d1-a1a2-0bacb6f0a304');
-    assert.equal(mirrored?.name, 'Review Claude-to-IM-skill Feishu use');
+    assert.equal(mirrored?.name, 'Review codex-feishu-bridge Feishu use');
     assert.equal(sends.at(-1)?.parseMode, 'CardJson');
     assert.match(sends.at(-1)!.text, /Current Session|当前会话/);
   });

@@ -54,14 +54,14 @@ Install into Codex and keep using the legacy `claude-to-im` command name for com
 ### Recommended: Codex install script
 
 ```bash
-git clone https://github.com/op7418/Claude-to-IM-skill.git ~/code/codex-feishu-bridge
+git clone https://github.com/op7418/codex-feishu-bridge.git ~/code/codex-feishu-bridge
 bash ~/code/codex-feishu-bridge/scripts/install-codex.sh
 ```
 
 Windows PowerShell:
 
 ```powershell
-git clone https://github.com/op7418/Claude-to-IM-skill.git $env:USERPROFILE\code\codex-feishu-bridge
+git clone https://github.com/op7418/codex-feishu-bridge.git $env:USERPROFILE\code\codex-feishu-bridge
 powershell -ExecutionPolicy Bypass -File $env:USERPROFILE\code\codex-feishu-bridge\scripts\install-codex.ps1
 ```
 
@@ -88,7 +88,7 @@ claude-to-im setup
 ### Alternative: clone directly into Codex skills
 
 ```bash
-git clone https://github.com/op7418/Claude-to-IM-skill.git ~/.codex/skills/claude-to-im
+git clone https://github.com/op7418/codex-feishu-bridge.git ~/.codex/skills/claude-to-im
 cd ~/.codex/skills/claude-to-im
 npm install
 npm run build

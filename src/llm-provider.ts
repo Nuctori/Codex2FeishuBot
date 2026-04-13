@@ -2,7 +2,7 @@
  * LLM Provider using @anthropic-ai/claude-agent-sdk query() function.
  *
  * Converts SDK stream events into the SSE format expected by
- * the claude-to-im bridge conversation engine.
+ * the Codex ↔ Feishu bridge conversation engine.
  */
 
 import fs from 'node:fs';

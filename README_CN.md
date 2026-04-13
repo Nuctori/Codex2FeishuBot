@@ -1,10 +1,10 @@
-# Codex <-> Feishu
+# Codex ↔ Feishu
 
 当前产品定位: 把正在运行的 Codex 编程会话继续到飞书里。
 
 [English](README.md)
 
-> 兼容说明: 当前安装目录名、命令名和遗留数据路径 `~/.claude-to-im/` 仍然保留, 这样不会打断现有 Codex 工作流。对外产品命名收敛为 `Codex <-> Feishu`。
+> 兼容说明: 当前安装目录名、命令名和遗留数据路径 `~/.claude-to-im/` 仍然保留, 这样不会打断现有 Codex 工作流。对外产品命名收敛为 `Codex ↔ Feishu`。
 >
 > 架构说明: 仓库里仍保留通用适配层和 provider 抽象, 但现在它们只是兼容或预留能力, 不是当前产品承诺。
 
@@ -21,7 +21,7 @@ Codex
   -> 读写你的工作区
 ```
 
-当前真正维护的路径只有 `Codex <-> Feishu`。
+当前真正维护的路径只有 `Codex ↔ Feishu`。
 
 ## 当前范围
 
@@ -53,14 +53,14 @@ Codex
 ### 推荐: 用 Codex 安装脚本
 
 ```bash
-git clone https://github.com/op7418/Claude-to-IM-skill.git ~/code/codex-feishu-bridge
+git clone https://github.com/op7418/codex-feishu-bridge.git ~/code/codex-feishu-bridge
 bash ~/code/codex-feishu-bridge/scripts/install-codex.sh
 ```
 
 Windows PowerShell:
 
 ```powershell
-git clone https://github.com/op7418/Claude-to-IM-skill.git $env:USERPROFILE\code\codex-feishu-bridge
+git clone https://github.com/op7418/codex-feishu-bridge.git $env:USERPROFILE\code\codex-feishu-bridge
 powershell -ExecutionPolicy Bypass -File $env:USERPROFILE\code\codex-feishu-bridge\scripts\install-codex.ps1
 ```
 
@@ -152,7 +152,7 @@ start bridge
 
 | 命令或自然语言 | 说明 |
 |---|---|
-| `claude-to-im setup` / `配置桥接` | 配置 Codex <-> Feishu 桥接 |
+| `claude-to-im setup` / `配置桥接` | 配置 Codex ↔ Feishu 桥接 |
 | `start bridge` / `启动桥接` | 启动后台守护进程 |
 | `stop bridge` / `停止桥接` | 停止守护进程 |
 | `bridge status` / `查看桥接状态` | 查看当前运行状态 |

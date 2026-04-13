@@ -85,10 +85,23 @@ git clone https://github.com/op7418/Claude-to-IM-skill.git ~/code/Claude-to-IM-s
 bash ~/code/Claude-to-IM-skill/scripts/install-codex.sh
 ```
 
+On Windows PowerShell:
+
+```powershell
+git clone https://github.com/op7418/Claude-to-IM-skill.git $env:USERPROFILE\code\Claude-to-IM-skill
+powershell -ExecutionPolicy Bypass -File $env:USERPROFILE\code\Claude-to-IM-skill\scripts\install-codex.ps1
+```
+
 For local development with a live checkout:
 
 ```bash
 bash ~/code/Claude-to-IM-skill/scripts/install-codex.sh --link
+```
+
+Windows PowerShell development install:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File $env:USERPROFILE\code\Claude-to-IM-skill\scripts\install-codex.ps1 -Link
 ```
 
 The install script places the skill under `~/.codex/skills/claude-to-im`, installs dependencies, and builds the daemon.
@@ -155,6 +168,13 @@ If you installed with the Codex install script in copy mode:
 ```bash
 rm -rf ~/.codex/skills/claude-to-im
 bash ~/code/Claude-to-IM-skill/scripts/install-codex.sh
+```
+
+Windows PowerShell:
+
+```powershell
+Remove-Item -Recurse -Force $env:USERPROFILE\.codex\skills\claude-to-im
+powershell -ExecutionPolicy Bypass -File $env:USERPROFILE\code\Claude-to-IM-skill\scripts\install-codex.ps1
 ```
 
 If you installed with `--link` or cloned directly into the Codex skills directory:

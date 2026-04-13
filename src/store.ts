@@ -139,6 +139,10 @@ function getDockState(binding: ChannelBinding): DockBindingState {
   return { openSessionIds, sessionSeenCounts };
 }
 
+function getBindingStorageKey(channelType: string, chatId: string, bindingKey?: string): string {
+  return `${channelType}:${bindingKey?.trim() || chatId}`;
+}
+
 // ── Lock entry ──
 
 interface LockEntry {
@@ -512,16 +516,27 @@ export class JsonFileStore implements BridgeStore {
 
   // ── Channel Bindings ──
 
-  getChannelBinding(channelType: string, chatId: string): ChannelBinding | null {
-    return this.bindings.get(`${channelType}:${chatId}`) ?? null;
+  getChannelBinding(channelType: string, chatId: string, bindingKey?: string): ChannelBinding | null {
+    const direct = this.bindings.get(getBindingStorageKey(channelType, chatId, bindingKey));
+    if (direct) return direct;
+    if (bindingKey) return null;
+
+    const matches = Array.from(this.bindings.values()).filter(
+      (binding) => binding.channelType === channelType && binding.chatId === chatId,
+    );
+    if (matches.length === 1) {
+      return matches[0] ?? null;
+    }
+    return null;
   }
 
   upsertChannelBinding(data: UpsertChannelBindingInput): ChannelBinding {
-    const key = `${data.channelType}:${data.chatId}`;
+    const key = getBindingStorageKey(data.channelType, data.chatId, data.bindingKey);
     const existing = this.bindings.get(key);
     if (existing) {
       const updated: ChannelBinding = {
         ...existing,
+        bindingKey: data.bindingKey ?? existing.bindingKey,
         codepilotSessionId: data.codepilotSessionId,
         sdkSessionId: data.sdkSessionId ?? existing.sdkSessionId,
         workingDirectory: data.workingDirectory,
@@ -537,6 +552,7 @@ export class JsonFileStore implements BridgeStore {
       id: uuid(),
       channelType: data.channelType,
       chatId: data.chatId,
+      bindingKey: data.bindingKey,
       codepilotSessionId: data.codepilotSessionId,
       sdkSessionId: data.sdkSessionId ?? '',
       workingDirectory: data.workingDirectory,
@@ -554,7 +570,12 @@ export class JsonFileStore implements BridgeStore {
   updateChannelBinding(id: string, updates: Partial<ChannelBinding>): void {
     for (const [key, b] of this.bindings) {
       if (b.id === id) {
-        this.bindings.set(key, { ...b, ...updates, updatedAt: now() });
+        const nextBinding = { ...b, ...updates, updatedAt: now() };
+        const nextKey = getBindingStorageKey(nextBinding.channelType, nextBinding.chatId, nextBinding.bindingKey);
+        if (nextKey !== key) {
+          this.bindings.delete(key);
+        }
+        this.bindings.set(nextKey, nextBinding);
         this.persistBindings();
         break;
       }

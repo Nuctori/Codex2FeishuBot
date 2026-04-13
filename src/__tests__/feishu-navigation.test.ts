@@ -862,6 +862,139 @@ describe('Feishu navigation cards', () => {
     assert.ok(second);
   });
 
+  it('ignores unauthorized card action callbacks', async () => {
+    const adapter = new FeishuAdapter() as any;
+    const queued: Array<{ messageId: string; callbackData?: string }> = [];
+    adapter.enqueue = (message: { messageId: string; callbackData?: string }) => {
+      queued.push(message);
+    };
+    adapter.isAuthorized = () => false;
+
+    const result = await adapter.handleCardAction({
+      token: 'card_action_token_unauthorized',
+      action: { value: { callback_data: 'nav:projects' } },
+      context: {
+        open_chat_id: 'chat-1',
+        open_message_id: 'om_card_unauthorized',
+      },
+      operator: { open_id: 'ou_intruder' },
+    });
+
+    assert.equal(queued.length, 0);
+    assert.ok(result);
+    assert.match(JSON.stringify(result), /无权|not authorized|没有权限/i);
+  });
+
+  it('uses sender user_id fallback for authorized card actions when open_id is absent', async () => {
+    const adapter = new FeishuAdapter() as any;
+    const queued: Array<{ address: { bindingKey?: string; userId?: string }; callbackData?: string }> = [];
+    adapter.enqueue = (message: { address: { bindingKey?: string; userId?: string }; callbackData?: string }) => {
+      queued.push(message);
+    };
+
+    const result = await adapter.handleCardAction({
+      token: 'card_action_token_user_id_only',
+      action: { value: { callback_data: 'nav:projects' } },
+      context: {
+        open_chat_id: 'chat-1',
+        open_message_id: 'om_card_user_id_only',
+      },
+      operator: { user_id: 'ou_user_1' },
+    });
+
+    assert.equal(queued.length, 1);
+    assert.equal(queued[0].address.userId, 'ou_user_1');
+    assert.equal(queued[0].address.bindingKey, 'chat-1::ou_user_1');
+    assert.equal(queued[0].callbackData, 'nav:projects');
+    assert.ok(result);
+  });
+
+  it('routes permission callbacks through bindingKey-scoped permission links', async () => {
+    const store = new JsonFileStore(makeSettings());
+    let resolved: { permissionRequestId: string; behavior: string } | null = null;
+    initBridgeContext({
+      store,
+      llm: {
+        streamChat() {
+          throw new Error('Not implemented in test');
+        },
+      },
+      permissions: {
+        resolvePendingPermission(permissionRequestId: string, decision: { behavior: string }) {
+          resolved = { permissionRequestId, behavior: decision.behavior };
+          return true;
+        },
+      },
+      lifecycle: {},
+    });
+
+    store.insertPermissionLink({
+      permissionRequestId: 'perm-binding-key',
+      channelType: 'feishu',
+      chatId: 'chat-1::ou_user_1',
+      messageId: 'om_perm_1',
+      toolName: 'Edit',
+      suggestions: '',
+    });
+
+    const sends: Array<{ text: string }> = [];
+    const fakeAdapter = {
+      channelType: 'feishu',
+      async send(message: { text: string }) {
+        sends.push(message);
+        return { ok: true, messageId: `msg_${sends.length}` };
+      },
+      acknowledgeUpdate() {},
+    } as any;
+
+    await bridgeTestOnly.handleMessage(fakeAdapter, {
+      messageId: 'evt_perm_1',
+      address: {
+        channelType: 'feishu',
+        chatId: 'chat-1',
+        userId: 'ou_user_1',
+        bindingKey: 'chat-1::ou_user_1',
+      },
+      text: '',
+      timestamp: Date.now(),
+      callbackData: 'perm:allow:perm-binding-key',
+      callbackMessageId: 'om_perm_1',
+      updateId: 1,
+    });
+
+    assert.deepEqual(resolved, { permissionRequestId: 'perm-binding-key', behavior: 'allow' });
+    assert.equal(sends.length, 1);
+    assert.match(sends[0].text, /权限回复已记录|Permission response recorded/);
+  });
+
+  it('detects numeric permission shortcuts using bindingKey-scoped pending links', () => {
+    const store = new JsonFileStore(makeSettings());
+    initTestContext(store);
+
+    store.insertPermissionLink({
+      permissionRequestId: 'perm-shortcut',
+      channelType: 'feishu',
+      chatId: 'chat-1::ou_user_1',
+      messageId: 'om_perm_shortcut',
+      toolName: 'Edit',
+      suggestions: '',
+    });
+
+    assert.equal(
+      bridgeTestOnly.isNumericPermissionShortcut('feishu', '1', {
+        chatId: 'chat-1',
+        bindingKey: 'chat-1::ou_user_1',
+      }),
+      true,
+    );
+    assert.equal(
+      bridgeTestOnly.isNumericPermissionShortcut('feishu', '1', {
+        chatId: 'chat-1',
+      }),
+      false,
+    );
+  });
+
   it('runs the full project-session navigation flow through callback handling', async () => {
     const store = new JsonFileStore(makeSettings());
     initTestContext(store);

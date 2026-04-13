@@ -11,6 +11,7 @@
 
 import type { PermissionUpdate } from '@anthropic-ai/claude-agent-sdk';
 import type { ChannelAddress, OutboundMessage } from './types.js';
+import { getAddressBindingKey } from './types.js';
 import type { BaseChannelAdapter } from './channel-adapter.js';
 import { deliver } from './delivery-layer.js';
 import { getBridgeContext } from './context.js';
@@ -123,7 +124,7 @@ export async function forwardPermissionRequest(
       store.insertPermissionLink({
         permissionRequestId,
         channelType: adapter.channelType,
-        chatId: address.chatId,
+        chatId: getAddressBindingKey(address),
         messageId: result.messageId,
         toolName,
         suggestions: suggestions ? JSON.stringify(suggestions) : '',

@@ -85,10 +85,23 @@ git clone https://github.com/op7418/Claude-to-IM-skill.git ~/code/Claude-to-IM-s
 bash ~/code/Claude-to-IM-skill/scripts/install-codex.sh
 ```
 
+Windows PowerShell：
+
+```powershell
+git clone https://github.com/op7418/Claude-to-IM-skill.git $env:USERPROFILE\code\Claude-to-IM-skill
+powershell -ExecutionPolicy Bypass -File $env:USERPROFILE\code\Claude-to-IM-skill\scripts\install-codex.ps1
+```
+
 如果你想保留可开发的本地仓库：
 
 ```bash
 bash ~/code/Claude-to-IM-skill/scripts/install-codex.sh --link
+```
+
+Windows PowerShell 开发模式：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File $env:USERPROFILE\code\Claude-to-IM-skill\scripts\install-codex.ps1 -Link
 ```
 
 安装脚本会把 Skill 放到 `~/.codex/skills/claude-to-im`，并自动安装依赖、构建 daemon。
@@ -155,6 +168,13 @@ npm run build
 ```bash
 rm -rf ~/.codex/skills/claude-to-im
 bash ~/code/Claude-to-IM-skill/scripts/install-codex.sh
+```
+
+Windows PowerShell：
+
+```powershell
+Remove-Item -Recurse -Force $env:USERPROFILE\.codex\skills\claude-to-im
+powershell -ExecutionPolicy Bypass -File $env:USERPROFILE\code\Claude-to-IM-skill\scripts\install-codex.ps1
 ```
 
 如果你是用 `--link` 模式，或者直接克隆到 Codex skills 目录：

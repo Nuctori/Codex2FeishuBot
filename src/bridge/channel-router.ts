@@ -6,6 +6,7 @@
  */
 
 import type { ChannelAddress, ChannelBinding, ChannelType } from './types.js';
+import { getAddressBindingKey } from './types.js';
 import { getBridgeContext } from './context.js';
 
 /**
@@ -14,7 +15,7 @@ import { getBridgeContext } from './context.js';
  */
 export function resolve(address: ChannelAddress): ChannelBinding {
   const { store } = getBridgeContext();
-  const existing = store.getChannelBinding(address.channelType, address.chatId);
+  const existing = store.getChannelBinding(address.channelType, address.chatId, getAddressBindingKey(address));
   if (existing) {
     // Verify the linked session still exists; if not, create a new one
     const session = store.getSession(existing.codepilotSessionId);
@@ -56,6 +57,7 @@ export function createBinding(
   return store.upsertChannelBinding({
     channelType: address.channelType,
     chatId: address.chatId,
+    bindingKey: getAddressBindingKey(address),
     codepilotSessionId: session.id,
     sdkSessionId: '',
     workingDirectory: defaultCwd,
@@ -81,6 +83,7 @@ export function bindToSession(
   return store.upsertChannelBinding({
     channelType: address.channelType,
     chatId: address.chatId,
+    bindingKey: getAddressBindingKey(address),
     codepilotSessionId,
     sdkSessionId,
     workingDirectory: session.working_directory,

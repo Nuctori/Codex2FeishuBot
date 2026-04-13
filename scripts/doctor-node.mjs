@@ -12,6 +12,7 @@ const CTI_HOME = process.env.CTI_HOME || path.join(os.homedir(), '.claude-to-im'
 const CONFIG_FILE = path.join(CTI_HOME, 'config.env');
 const PID_FILE = path.join(CTI_HOME, 'runtime', 'bridge.pid');
 const LOG_FILE = path.join(CTI_HOME, 'logs', 'bridge.log');
+const ERROR_LOG_FILE = path.join(CTI_HOME, 'logs', 'bridge-error.log');
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const SKILL_DIR = path.resolve(SCRIPT_DIR, '..');
 const envEntries = loadEnvFile(CONFIG_FILE);
@@ -90,10 +91,12 @@ function pidAlive(pidText) {
   }
 }
 
-function recentLogHasErrors() {
-  if (!fs.existsSync(LOG_FILE)) return false;
-  const lines = fs.readFileSync(LOG_FILE, 'utf8').trim().split(/\r?\n/).slice(-50);
-  return lines.some((line) => /error|fatal/i.test(line) && !/DEP0169|DeprecationWarning/i.test(line));
+function recentLogHasErrors(logFilePaths) {
+  return logFilePaths.some((logFilePath) => {
+    if (!fs.existsSync(logFilePath)) return false;
+    const lines = fs.readFileSync(logFilePath, 'utf8').trim().split(/\r?\n/).slice(-50);
+    return lines.some((line) => /error|fatal/i.test(line) && !/DEP0169|DeprecationWarning/i.test(line));
+  });
 }
 
 const nodeMajor = Number(process.versions.node.split('.')[0] || '0');
@@ -209,11 +212,12 @@ if (fs.existsSync(PID_FILE)) {
   check('PID file consistency (no PID file, OK)', true);
 }
 
+const recentLogsHaveErrors = recentLogHasErrors([LOG_FILE, ERROR_LOG_FILE]);
 check(
-  recentLogHasErrors()
-    ? 'No recent errors in log (found ERROR/Fatal lines in the last 50 lines)'
-    : 'No recent errors in log (last 50 lines)',
-  !recentLogHasErrors(),
+  recentLogsHaveErrors
+    ? 'No recent errors in logs (found ERROR/Fatal lines in bridge.log or bridge-error.log)'
+    : 'No recent errors in logs (last 50 lines of bridge.log + bridge-error.log)',
+  !recentLogsHaveErrors,
 );
 
 console.log('');

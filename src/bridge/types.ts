@@ -23,6 +23,7 @@ export interface ChannelAddress {
   channelType: ChannelType;
   chatId: string;        // Platform-specific chat/channel identifier
   userId?: string;       // Platform-specific user identifier (optional for group chats)
+  bindingKey?: string;   // Optional routing key for per-user bindings within one chat
   displayName?: string;  // Human-readable name for audit logs
 }
 
@@ -93,6 +94,7 @@ export interface ChannelBinding {
   id: string;
   channelType: ChannelType;
   chatId: string;
+  bindingKey?: string;
   /** CodePilot session ID this chat is bound to */
   codepilotSessionId: string;
   /** SDK session ID for resume (cached from last conversation) */
@@ -107,6 +109,10 @@ export interface ChannelBinding {
   active: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+export function getAddressBindingKey(address: Pick<ChannelAddress, 'chatId' | 'bindingKey'>): string {
+  return address.bindingKey?.trim() || address.chatId;
 }
 
 // ── Bridge Status ──────────────────────────────────────────────

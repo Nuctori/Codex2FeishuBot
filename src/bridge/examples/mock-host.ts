@@ -6,7 +6,7 @@
  * any real database, LLM, or permission system.
  *
  * Usage:
- *   npx tsx src/lib/bridge/examples/mock-host.ts
+ *   npx tsx src/bridge/examples/mock-host.ts
  *
  * This example:
  * 1. Creates an in-memory store

@@ -417,10 +417,20 @@ export class FeishuAdapter extends BaseChannelAdapter {
       // Extract chat/user context
       const chatId = event?.context?.open_chat_id || value.chatId || '';
       const messageId = event?.context?.open_message_id || event?.open_message_id || '';
-      const userId = event?.operator?.open_id || event?.open_id || '';
+      const userId = event?.operator?.open_id
+        || event?.operator?.user_id
+        || event?.operator?.union_id
+        || event?.open_id
+        || event?.user_id
+        || event?.union_id
+        || '';
       const callbackToken = event?.token || event?.trigger_id || '';
 
       if (!chatId) return FALLBACK_TOAST;
+      if (!this.isAuthorized(userId, chatId)) {
+        console.warn('[feishu-adapter] Unauthorized card action from userId:', userId, 'chatId:', chatId);
+        return { toast: { type: 'error' as const, content: '没有权限' } };
+      }
 
       if (callbackToken && this.seenCardActionTokens.has(callbackToken)) {
         console.log('[feishu-adapter] Duplicate card action ignored:', JSON.stringify({
@@ -450,6 +460,7 @@ export class FeishuAdapter extends BaseChannelAdapter {
           channelType: 'feishu',
           chatId,
           userId,
+          bindingKey: userId ? `${chatId}::${userId}` : chatId,
         },
         text: '',
         timestamp: Date.now(),
@@ -1370,6 +1381,7 @@ export class FeishuAdapter extends BaseChannelAdapter {
       channelType: 'feishu' as const,
       chatId,
       userId,
+      bindingKey: userId ? `${chatId}::${userId}` : chatId,
     };
 
     // [P1] Check for /perm text command (permission approval fallback)

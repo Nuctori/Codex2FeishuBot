@@ -4,7 +4,7 @@
 
 .DESCRIPTION
   Manages the bridge process on Windows.
-  Preferred: WinSW or NSSM wrapping as a Windows Service.
+  Preferred: WinSW wrapping as a Windows Service.
   Fallback:  Start-Process with hidden window + PID tracking.
 
   Usage:
@@ -12,7 +12,7 @@
     powershell -File scripts\daemon.ps1 stop
     powershell -File scripts\daemon.ps1 status
     powershell -File scripts\daemon.ps1 logs [N]
-    powershell -File scripts\daemon.ps1 install-service   # WinSW/NSSM setup
+    powershell -File scripts\daemon.ps1 install-service   # WinSW setup
     powershell -File scripts\daemon.ps1 uninstall-service
 #>
 
@@ -39,8 +39,10 @@ $LogFile    = Join-Path (Join-Path $CtiHome 'logs') 'bridge.log'
 $ErrorLogFile = Join-Path (Join-Path $CtiHome 'logs') 'bridge-error.log'
 $DaemonMjs  = Join-Path (Join-Path $SkillDir 'dist') 'daemon.mjs'
 $WatchdogMjs  = Join-Path (Join-Path $SkillDir 'dist') 'windows-watchdog.mjs'
+$ServiceConfigModule = Join-Path $SkillDir 'scripts\windows-service-config.mjs'
 
 $ServiceName = 'ClaudeToIMBridge'
+$StartTimeoutSeconds = 20
 
 # ── Helpers ──
 
@@ -52,7 +54,10 @@ function Ensure-Dirs {
 }
 
 function Ensure-Built {
-    if (-not (Test-Path $DaemonMjs)) {
+    $daemonMissing = -not (Test-Path $DaemonMjs)
+    $watchdogMissing = -not (Test-Path $WatchdogMjs)
+
+    if ($daemonMissing -or $watchdogMissing) {
         Write-Host "Building daemon bundle..."
         Push-Location $SkillDir
         npm run build
@@ -61,7 +66,11 @@ function Ensure-Built {
         $srcFiles = Get-ChildItem -Path (Join-Path $SkillDir 'src') -Filter '*.ts' -Recurse
         $bundleTime = (Get-Item $DaemonMjs).LastWriteTime
         $stale = $srcFiles | Where-Object { $_.LastWriteTime -gt $bundleTime } | Select-Object -First 1
-        if ($stale) {
+        $watchdogSource = Join-Path $SkillDir 'src\windows-watchdog.ts'
+        $watchdogTime = (Get-Item $WatchdogMjs).LastWriteTime
+        $watchdogStale = (Test-Path $watchdogSource) -and ((Get-Item $watchdogSource).LastWriteTime -gt $watchdogTime)
+
+        if ($stale -or $watchdogStale) {
             Write-Host "Rebuilding daemon bundle (source changed)..."
             Push-Location $SkillDir
             npm run build
@@ -177,28 +186,23 @@ function Show-FailureHelp {
         Write-Host "  (no log file)"
     }
     Write-Host ""
+    Write-Host "Recent stderr:"
+    if (Test-Path $ErrorLogFile) {
+        Get-Content $ErrorLogFile -Tail 20
+    } else {
+        Write-Host "  (no error log file)"
+    }
+    Write-Host ""
     Write-Host "Next steps:"
     Write-Host "  1. Run diagnostics:  powershell -File `"$SkillDir\scripts\doctor.ps1`""
-    Write-Host "  2. Check full logs:  powershell -File `"$SkillDir\scripts\daemon.ps1`" logs 100"
+    Write-Host "  2. Check full logs:  powershell -File `"$SkillDir\scripts\daemon.ps1`" logs 100   # shows bridge.log + bridge-error.log"
     Write-Host "  3. Rebuild bundle:   cd `"$SkillDir`"; npm run build"
-    Write-Host "  4. Install WinSW or NSSM for true service-mode auto restart"
+    Write-Host "  4. Install WinSW for true service-mode auto restart"
 }
 
 function Get-ForwardedServiceEnvironment {
-    $names = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-    foreach ($name in @('USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'PATH', 'CTI_HOME', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY')) {
-        $null = $names.Add($name)
-    }
-
-    foreach ($entry in [System.Environment]::GetEnvironmentVariables().GetEnumerator()) {
-        $name = [string]$entry.Key
-        if ($name -match '^(CTI_|CODEX_|OPENAI_|ANTHROPIC_)') {
-            $null = $names.Add($name)
-        }
-    }
-
     $forwarded = @()
-    foreach ($name in ($names | Sort-Object)) {
+    foreach ($name in @('USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'PATH', 'CTI_HOME', 'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY')) {
         $value = [System.Environment]::GetEnvironmentVariable($name, 'Process')
         if ([string]::IsNullOrEmpty($value)) { continue }
         $forwarded += [pscustomobject]@{
@@ -228,6 +232,52 @@ function Get-NodePath {
     return $nodePath
 }
 
+function Get-BridgeRuntimeState {
+    $watchdogPid = Read-WatchdogPid
+    $bridgePid = Read-Pid
+    $watchdogAlive = $watchdogPid -and (Test-WatchdogProcess $watchdogPid)
+    $bridgeAlive = $bridgePid -and (Test-BridgeProcess $bridgePid)
+    $statusReady = $bridgePid -and (Test-StatusRunning $bridgePid)
+
+    return [pscustomobject]@{
+        WatchdogPid = $watchdogPid
+        BridgePid = $bridgePid
+        WatchdogAlive = [bool]$watchdogAlive
+        BridgeAlive = [bool]$bridgeAlive
+        StatusReady = [bool]$statusReady
+    }
+}
+
+function Wait-ForBridgeLaunch {
+    param(
+        [switch]$RequireWatchdog,
+        [int]$TimeoutSeconds = $StartTimeoutSeconds,
+        [int]$PollMilliseconds = 500
+    )
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $state = Get-BridgeRuntimeState
+
+    while ($true) {
+        $ready = if ($RequireWatchdog) {
+            $state.WatchdogAlive -and $state.BridgeAlive
+        } else {
+            $state.BridgeAlive
+        }
+
+        if ($ready) {
+            return $state
+        }
+
+        if ((Get-Date) -ge $deadline) {
+            return $state
+        }
+
+        Start-Sleep -Milliseconds $PollMilliseconds
+        $state = Get-BridgeRuntimeState
+    }
+}
+
 # ── WinSW / NSSM detection ──
 
 function Find-ServiceManager {
@@ -245,38 +295,16 @@ function Install-WinSWService {
     param([string]$WinSWPath)
     $nodePath = Get-NodePath
     $xmlPath = Join-Path $SkillDir "$ServiceName.xml"
-    $envXml = ConvertTo-WinSWEnvXml -Entries (Get-ForwardedServiceEnvironment)
-
-    # Run as current user so the service can access ~/.claude-to-im and Codex login state
-    $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-    Write-Host "Service will run as: $currentUser"
-    $cred = Get-Credential -UserName $currentUser -Message "Enter password for '$currentUser' (required for Windows Service logon)"
-    $plainPwd = $cred.GetNetworkCredential().Password
-
-    # Generate WinSW config XML
-    @"
-<service>
-  <id>$ServiceName</id>
-  <name>Claude-to-IM Bridge</name>
-  <description>Claude-to-IM bridge daemon</description>
-  <executable>$nodePath</executable>
-  <arguments>$DaemonMjs</arguments>
-  <workingdirectory>$SkillDir</workingdirectory>
-  <serviceaccount>
-    <username>$currentUser</username>
-    <password>$([System.Security.SecurityElement]::Escape($plainPwd))</password>
-    <allowservicelogon>true</allowservicelogon>
-  </serviceaccount>
-$envXml
-  <logpath>$(Join-Path $CtiHome 'logs')</logpath>
-  <log mode="append">
-    <logfile>bridge-service.log</logfile>
-  </log>
-  <onfailure action="restart" delay="10 sec"/>
-  <onfailure action="restart" delay="30 sec"/>
-  <onfailure action="none"/>
-</service>
-"@ | Set-Content -Path $xmlPath -Encoding UTF8
+    $envJson = (Get-ForwardedServiceEnvironment | ConvertTo-Json -Compress)
+    $xml = & node $ServiceConfigModule `
+        build-winsw-xml `
+        --service-name $ServiceName `
+        --node-path $nodePath `
+        --daemon-path $DaemonMjs `
+        --working-directory $SkillDir `
+        --log-directory (Join-Path $CtiHome 'logs') `
+        --env-json $envJson
+    Set-Content -Path $xmlPath -Value $xml -Encoding UTF8
 
     # Copy WinSW next to the XML with matching name
     $winswCopy = Join-Path $SkillDir "$ServiceName.exe"
@@ -284,40 +312,21 @@ $envXml
 
     & $winswCopy install
     Write-Host "Service '$ServiceName' installed via WinSW."
-    Write-Host "  Service account: $currentUser"
+    Write-Host "  Service account: default Windows service account"
+    Write-Host "  Secrets are not embedded in $xmlPath; use config.env/CTI_HOME for runtime credentials."
     Write-Host "Start with:  & `"$winswCopy`" start"
     Write-Host "Or:          sc.exe start $ServiceName"
 }
 
-function Install-NSSMService {
+function Show-NSSMNotSupported {
     param([string]$NSSMPath)
-    $nodePath = Get-NodePath
-    $envEntries = Get-ForwardedServiceEnvironment
-    $envArgs = $envEntries | ForEach-Object { "$($_.Name)=$($_.Value)" }
 
-    # Run as current user so the service can access ~/.claude-to-im and Codex login state
-    $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-    Write-Host "Service will run as: $currentUser"
-    $cred = Get-Credential -UserName $currentUser -Message "Enter password for '$currentUser' (required for Windows Service logon)"
-    $plainPwd = $cred.GetNetworkCredential().Password
-
-    & $NSSMPath install $ServiceName $nodePath $DaemonMjs
-    & $NSSMPath set $ServiceName AppDirectory $SkillDir
-    & $NSSMPath set $ServiceName ObjectName $currentUser $plainPwd
-    & $NSSMPath set $ServiceName AppStdout $LogFile
-    & $NSSMPath set $ServiceName AppStderr $LogFile
-    & $NSSMPath set $ServiceName AppStdoutCreationDisposition 4
-    & $NSSMPath set $ServiceName AppStderrCreationDisposition 4
-    & $NSSMPath set $ServiceName Description "Claude-to-IM bridge daemon"
-    & $NSSMPath set $ServiceName AppRestartDelay 10000
-    if ($envArgs.Count -gt 0) {
-        & $NSSMPath set $ServiceName AppEnvironmentExtra $envArgs
-    }
-
-    Write-Host "Service '$ServiceName' installed via NSSM."
-    Write-Host "  Service account: $currentUser"
-    Write-Host "Start with:  nssm start $ServiceName"
-    Write-Host "Or:          sc.exe start $ServiceName"
+    Write-Host "NSSM detected at: $NSSMPath"
+    Write-Host "Secure auto-install via NSSM is disabled."
+    Write-Host "Reason: configuring NSSM for the current Windows user requires passing the account password on the command line."
+    Write-Host "Install WinSW instead, then re-run:"
+    Write-Host "  powershell -File `"$PSCommandPath`" install-service"
+    exit 1
 }
 
 # ── Fallback: Start-Process (no service manager) ──
@@ -381,11 +390,13 @@ switch ($Command) {
         if ($svc) {
             Write-Host "Starting bridge via Windows Service..."
             Start-Service -Name $ServiceName
-            Start-Sleep -Seconds 3
-
-            $newPid = Read-Pid
-            if ($newPid -and (Test-BridgeProcess $newPid) -and (Test-StatusRunning $newPid)) {
+            $serviceState = Wait-ForBridgeLaunch -TimeoutSeconds $StartTimeoutSeconds
+            $newPid = $serviceState.BridgePid
+            if ($serviceState.BridgeAlive) {
                 Write-Host "Bridge started (PID: $newPid, managed by Windows Service)"
+                if (-not $serviceState.StatusReady) {
+                    Write-Host "Bridge status file is still warming up; the service child is already alive."
+                }
                 if (Test-Path $StatusFile) { Get-Content $StatusFile -Raw }
             } else {
                 Write-Host "Failed to start bridge via service."
@@ -397,13 +408,12 @@ switch ($Command) {
         } else {
             Write-Host "Starting bridge watchdog (background process)..."
             $watchdogPid = Start-Fallback
-            Start-Sleep -Seconds 3
-
-            $newWatchdogPid = Read-WatchdogPid
-            $newPid = Read-Pid
-            $watchdogAlive = $newWatchdogPid -and (Test-WatchdogProcess $newWatchdogPid)
-            $bridgeAlive = $newPid -and (Test-BridgeProcess $newPid)
-            $statusReady = $newPid -and (Test-StatusRunning $newPid)
+            $launchState = Wait-ForBridgeLaunch -RequireWatchdog -TimeoutSeconds $StartTimeoutSeconds
+            $newWatchdogPid = $launchState.WatchdogPid
+            $newPid = $launchState.BridgePid
+            $watchdogAlive = $launchState.WatchdogAlive
+            $bridgeAlive = $launchState.BridgeAlive
+            $statusReady = $launchState.StatusReady
             if ($watchdogAlive -and $bridgeAlive) {
                 Write-Host "Bridge started (PID: $newPid, watchdog PID: $newWatchdogPid)"
                 if (-not $statusReady) {
@@ -512,12 +522,26 @@ switch ($Command) {
     }
 
     'logs' {
+        $shown = $false
         if (Test-Path $LogFile) {
+            Write-Host "== bridge.log =="
             Get-Content $LogFile -Tail $LogLines | ForEach-Object {
                 $_ -replace '(token|secret|password)(["'']?\s*[:=]\s*["'']?)[^\s"]+', '$1$2*****'
             }
-        } else {
-            Write-Host "No log file found at $LogFile"
+            $shown = $true
+        }
+        if (Test-Path $ErrorLogFile) {
+            if ($shown) {
+                Write-Host ""
+            }
+            Write-Host "== bridge-error.log =="
+            Get-Content $ErrorLogFile -Tail $LogLines | ForEach-Object {
+                $_ -replace '(token|secret|password)(["'']?\s*[:=]\s*["'']?)[^\s"]+', '$1$2*****'
+            }
+            $shown = $true
+        }
+        if (-not $shown) {
+            Write-Host "No log files found at $LogFile or $ErrorLogFile"
         }
     }
 
@@ -527,9 +551,8 @@ switch ($Command) {
 
         $mgr = Find-ServiceManager
         if (-not $mgr) {
-            Write-Host "No service manager found. Install one of:"
+            Write-Host "WinSW not found."
             Write-Host "  WinSW:  https://github.com/winsw/winsw/releases"
-            Write-Host "  NSSM:   https://nssm.cc/download"
             Write-Host ""
             Write-Host "After installing, add it to PATH and re-run:"
             Write-Host "  powershell -File `"$PSCommandPath`" install-service"
@@ -538,7 +561,7 @@ switch ($Command) {
 
         switch ($mgr.type) {
             'winsw' { Install-WinSWService -WinSWPath $mgr.path }
-            'nssm'  { Install-NSSMService  -NSSMPath  $mgr.path }
+            'nssm'  { Show-NSSMNotSupported -NSSMPath $mgr.path }
         }
     }
 
@@ -578,7 +601,7 @@ switch ($Command) {
         Write-Host "  stop              Stop the bridge daemon"
         Write-Host "  status            Show bridge status"
         Write-Host "  logs [N]          Show last N log lines (default 50)"
-        Write-Host "  install-service   Install as Windows Service (requires WinSW or NSSM)"
+        Write-Host "  install-service   Install as Windows Service (requires WinSW)"
         Write-Host "  uninstall-service Remove the Windows Service"
     }
 }

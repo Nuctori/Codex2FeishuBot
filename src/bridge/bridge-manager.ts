@@ -12,6 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import type { BridgeStatus, InboundMessage, OutboundMessage, StreamContext, StreamingPreviewState, ToolCallInfo } from './types.js';
+import { getAddressBindingKey } from './types.js';
 import { createAdapter, getRegisteredTypes } from './channel-adapter.js';
 import type { BaseChannelAdapter } from './channel-adapter.js';
 import type { BridgeMessage, BridgeSession } from './host.js';
@@ -74,12 +75,16 @@ function getStreamConfig(channelType = 'telegram'): StreamConfig {
  * waiting for the permission to be resolved, so putting "1" behind the
  * session lock would deadlock.
  */
-function isNumericPermissionShortcut(channelType: string, rawText: string, chatId: string): boolean {
+function isNumericPermissionShortcut(
+  channelType: string,
+  rawText: string,
+  address: Pick<import('./types.js').ChannelAddress, 'chatId' | 'bindingKey'>,
+): boolean {
   if (channelType !== 'feishu' && channelType !== 'qq' && channelType !== 'weixin') return false;
   const normalized = rawText.normalize('NFKC').replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
   if (!/^[123]$/.test(normalized)) return false;
   const { store } = getBridgeContext();
-  const pending = store.listPendingPermissionLinksByChat(chatId);
+  const pending = store.listPendingPermissionLinksByChat(getAddressBindingKey(address));
   return pending.length > 0; // any pending 閳?route to inline path
 }
 
@@ -941,7 +946,7 @@ function syncBindingToCurrentSession(binding: ChannelBinding): ChannelBinding {
   }
 
   store.updateChannelBinding(binding.id, updates);
-  return store.getChannelBinding(binding.channelType, binding.chatId) ?? { ...binding, ...updates };
+  return store.getChannelBinding(binding.channelType, binding.chatId, binding.bindingKey) ?? { ...binding, ...updates };
 }
 
 function buildCurrentSessionPanel(
@@ -1043,7 +1048,7 @@ function persistSessionDock(
     openSessionIds: sanitizedIds,
     sessionSeenCounts: seenCounts,
   } as Partial<ChannelBinding>);
-  return store.getChannelBinding(binding.channelType, binding.chatId) ?? binding;
+  return store.getChannelBinding(binding.channelType, binding.chatId, binding.bindingKey) ?? binding;
 }
 
 function addSessionToDock(binding: ChannelBinding, sessionId: string, markSeen = false): ChannelBinding {
@@ -2807,6 +2812,7 @@ function archiveSessionAndRebindIfNeeded(
   return store.upsertChannelBinding({
     channelType: address.channelType,
     chatId: address.chatId,
+    bindingKey: getAddressBindingKey(address),
     codepilotSessionId: replacement.id,
     sdkSessionId: '',
     workingDirectory: replacement.working_directory,
@@ -3504,7 +3510,7 @@ function runAdapterLoop(adapter: BaseChannelAdapter): void {
         if (
           msg.callbackData ||
           msg.text.trim().startsWith('/') ||
-          isNumericPermissionShortcut(adapter.channelType, msg.text.trim(), msg.address.chatId)
+          isNumericPermissionShortcut(adapter.channelType, msg.text.trim(), msg.address)
         ) {
           await handleMessage(adapter, msg);
         } else {
@@ -3572,7 +3578,11 @@ async function handleMessage(
       return;
     }
 
-    const handled = broker.handlePermissionCallback(msg.callbackData, msg.address.chatId, msg.callbackMessageId);
+    const handled = broker.handlePermissionCallback(
+      msg.callbackData,
+      getAddressBindingKey(msg.address),
+      msg.callbackMessageId,
+    );
     if (handled) {
       // Send confirmation
       const confirmMsg: OutboundMessage = {
@@ -3637,13 +3647,13 @@ async function handleMessage(
     // eslint-disable-next-line no-control-regex
     const normalized = rawText.normalize('NFKC').replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
     if (/^[123]$/.test(normalized)) {
-      const pendingLinks = store.listPendingPermissionLinksByChat(msg.address.chatId);
+      const pendingLinks = store.listPendingPermissionLinksByChat(getAddressBindingKey(msg.address));
       if (pendingLinks.length === 1) {
         const actionMap: Record<string, string> = { '1': 'allow', '2': 'allow_session', '3': 'deny' };
         const action = actionMap[normalized];
         const permId = pendingLinks[0].permissionRequestId;
         const callbackData = `perm:${action}:${permId}`;
-        const handled = broker.handlePermissionCallback(callbackData, msg.address.chatId);
+        const handled = broker.handlePermissionCallback(callbackData, getAddressBindingKey(msg.address));
         const label = normalized === '1'
           ? localizeText('Allow', '允许一次')
           : normalized === '2'
@@ -4108,7 +4118,7 @@ async function handleCommand(
         break;
       }
       const callbackData = `perm:${permAction}:${permId}`;
-      const handled = broker.handlePermissionCallback(callbackData, msg.address.chatId);
+      const handled = broker.handlePermissionCallback(callbackData, getAddressBindingKey(msg.address));
       if (handled) {
         response = localizeText(`Permission ${permAction}: recorded.`, `权限 ${permAction}：已记录。`);
       } else {
@@ -4204,4 +4214,5 @@ export const _testOnly = {
   getProjectLabel,
   sendFeishuNavigationCard,
   handleMessage,
+  isNumericPermissionShortcut,
 };

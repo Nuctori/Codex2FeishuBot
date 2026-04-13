@@ -1,50 +1,59 @@
 # Security
 
+These notes describe the maintained `Codex ↔ Feishu` deployment path for this project.
+
 ## Credential Storage
 
-All credentials are stored in `~/.claude-to-im/config.env` with file permissions set to `600` (owner read/write only). This file is created during `setup` and never committed to version control.
+Bridge credentials are stored in the legacy data path `~/.claude-to-im/config.env` with file mode `600` when created by the setup flow. This file should stay local and must never be committed.
 
-The `.gitignore` excludes `config.env` to prevent accidental commits.
+Stored secrets may include:
+
+- Feishu App ID
+- Feishu App Secret
+- Optional allowlist identifiers
+- Local runtime preferences for the Codex bridge
 
 ## Log Redaction
 
-All tokens and secrets are masked in log output and terminal display. Only the last 4 characters of any secret are shown (e.g., `****abcd`). This applies to:
+All secrets are masked in terminal output and bridge logs. Only the last 4 characters are shown. This rule applies to:
 
-- Setup wizard confirmation output
-- `reconfigure` command display
-- `logs` command output
-- Error messages
+- setup confirmation
+- reconfigure output
+- doctor output
+- log inspection
+- runtime error messages
 
 ## Threat Model
 
-This project operates as a **single-user local daemon**:
+This project is a local single-user bridge:
 
-- The daemon runs on the user's local machine under their user account
-- No network listeners are opened; the daemon connects outbound to IM platform APIs only
-- Authentication is handled by the IM platform's bot token mechanism
-- Access control is enforced via allowed user/channel ID lists configured per platform
+- The daemon runs under the local user account
+- The bridge connects outbound to Feishu and Codex-related services
+- The maintained path does not require opening a public inbound HTTP server
+- Message access is controlled by Feishu app permissions and local binding rules
 
-The primary threats are:
+Primary threats:
 
-- **Token leakage**: Mitigated by file permissions, log redaction, and `.gitignore`
-- **Unauthorized message senders**: Mitigated by allowed user ID filtering per platform
-- **Local privilege escalation**: Mitigated by running as unprivileged user process
+- **Credential leakage** — mitigated by local-only storage, file permissions, masking, and `.gitignore`
+- **Unauthorized Feishu users** — mitigated by allowlists, session binding checks, and card-action validation
+- **Privilege misuse on the local machine** — mitigated by running as a normal user process instead of an elevated service
+- **Stale or misconfigured callbacks** — mitigated by explicit doctor/setup guidance and publish-state verification
 
 ## Token Rotation
 
-To rotate compromised or expired tokens:
+If a Feishu app secret is compromised or expired:
 
-1. Revoke the old token on the IM platform
-2. Generate a new token
-3. Run `/claude-to-im reconfigure` to update the stored credentials
-4. Run `/claude-to-im stop` then `/claude-to-im start` to apply changes
+1. Revoke or rotate the secret in Feishu Open Platform
+2. Run `claude-to-im reconfigure`
+3. Restart the bridge with `stop bridge` and `start bridge`
+4. Re-check logs and callback behavior
 
 ## Leak Response
 
-If you suspect a token has been leaked:
+If you suspect credentials leaked:
 
-1. **Immediately revoke** the token on the respective IM platform
-2. Run `/claude-to-im stop` to halt the daemon
-3. Run `/claude-to-im reconfigure` with a new token
-4. Review `~/.claude-to-im/logs/` for unauthorized activity
-5. Run `/claude-to-im start` with the new credentials
+1. Revoke them immediately in Feishu Open Platform
+2. Stop the bridge
+3. Update the stored credentials
+4. Review `~/.claude-to-im/logs/` for suspicious activity
+5. Restart only after the new credentials and callbacks are verified

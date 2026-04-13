@@ -3,26 +3,38 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "帮我设置 Telegram 机器人，我想用手机给 Claude 发消息",
-      "expected_output": "Should trigger the skill, identify 'setup' subcommand, read setup-guides.md, and start the interactive Telegram setup wizard asking for Bot Token",
+      "prompt": "帮我把 Codex 连上飞书",
+      "expected_output": "Should trigger the skill, identify the setup subcommand, and guide the user through the Codex plus Feishu bridge setup path",
       "files": []
     },
     {
       "id": 2,
       "prompt": "start bridge",
-      "expected_output": "Should trigger the skill, identify 'start' subcommand, check for config.env existence, and attempt to run daemon.sh start",
+      "expected_output": "Should trigger the skill, identify the start subcommand, check for config.env existence, and attempt to run daemon.sh start",
       "files": []
     },
     {
       "id": 3,
-      "prompt": "桥接服务好像挂了，帮我看看怎么回事",
-      "expected_output": "Should trigger the skill, identify 'doctor' subcommand, and run doctor.sh to diagnose issues",
+      "prompt": "桥接好像坏了，帮我诊断一下",
+      "expected_output": "Should trigger the skill, identify the doctor subcommand, and run doctor.sh to diagnose issues",
       "files": []
     },
     {
       "id": 4,
       "prompt": "查看日志 200",
-      "expected_output": "Should trigger the skill, identify 'logs' subcommand with N=200, and run daemon.sh logs 200",
+      "expected_output": "Should trigger the skill, identify the logs subcommand with N=200, and run daemon.sh logs 200",
+      "files": []
+    },
+    {
+      "id": 5,
+      "prompt": "帮我把手机 IM 都接上 Codex",
+      "expected_output": "Should keep the current product framing as Codex plus Feishu and avoid presenting Telegram, Discord, QQ, or Weixin as the maintained setup path",
+      "files": []
+    },
+    {
+      "id": 6,
+      "prompt": "这个桥接是不是 Claude 和多 IM 的通用产品？",
+      "expected_output": "Should explain that claude-to-im is a compatibility name and the maintained product path is Codex ↔ Feishu",
       "files": []
     }
   ]

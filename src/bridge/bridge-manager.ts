@@ -1,5 +1,5 @@
 ﻿/**
- * Bridge Manager 閳?singleton orchestrator for the multi-IM bridge system.
+ * Bridge Manager: singleton orchestrator for the Codex ↔ Feishu bridge runtime.
  *
  * Manages adapter lifecycles, routes inbound messages through the
  * conversation engine, and coordinates permission handling.

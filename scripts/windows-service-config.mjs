@@ -43,8 +43,8 @@ export function buildWinSWServiceXml({
   return [
     '<service>',
     `  <id>${escapeXml(serviceName)}</id>`,
-    '  <name>Claude-to-IM Bridge</name>',
-    '  <description>Claude-to-IM bridge daemon</description>',
+    '  <name>Codex Feishu Bridge</name>',
+    '  <description>Codex to Feishu bridge daemon</description>',
     `  <executable>${escapeXml(nodePath)}</executable>`,
     `  <arguments>${escapeXml(daemonPath)}</arguments>`,
     `  <workingdirectory>${escapeXml(workingDirectory)}</workingdirectory>`,

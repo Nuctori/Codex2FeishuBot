@@ -10,6 +10,7 @@ CONFIG_ENV_HELPER="$SKILL_DIR/scripts/config-env.mjs"
 PASS=0
 FAIL=0
 UNAME_S="$(uname -s 2>/dev/null || echo unknown)"
+INCLUDE_COMPAT_DOCTOR="${CTI_INCLUDE_COMPAT_DOCTOR:-false}"
 
 is_windows_like() {
   case "$UNAME_S" in
@@ -50,12 +51,14 @@ get_config() {
 
 # --- Read runtime setting ---
 CTI_RUNTIME=$(get_config CTI_RUNTIME)
-CTI_RUNTIME="${CTI_RUNTIME:-claude}"
+CTI_RUNTIME="${CTI_RUNTIME:-codex}"
+echo "Codex ↔ Feishu doctor"
 echo "Runtime: $CTI_RUNTIME"
 echo ""
 
 # --- Claude CLI available (claude/auto modes) ---
-if [ "$CTI_RUNTIME" = "claude" ] || [ "$CTI_RUNTIME" = "auto" ]; then
+if [ "$INCLUDE_COMPAT_DOCTOR" = "true" ] && { [ "$CTI_RUNTIME" = "claude" ] || [ "$CTI_RUNTIME" = "auto" ]; }; then
+  echo "Compatibility runtime checks: Claude"
   # Resolve CLI path matching the daemon's checkCliCompatibility logic:
   #   - Version >= 2.x AND all required flags present
   #   - Skip candidates that fail either check (same as resolveClaudeCliPath)
@@ -133,15 +136,15 @@ if [ "$CTI_RUNTIME" = "claude" ] || [ "$CTI_RUNTIME" = "auto" ]; then
   fi
 
   if [ -n "$CLAUDE_PATH" ] && [ "$CLAUDE_COMPAT" = "0" ]; then
-    check "Claude CLI compatible (${CLAUDE_VER} at ${CLAUDE_PATH})" 0
+    check "Compatibility Claude CLI compatible (${CLAUDE_VER} at ${CLAUDE_PATH})" 0
   elif [ -n "$CLAUDE_PATH" ]; then
     # Path found but incompatible (too old, missing flags, or not executable)
-    check "Claude CLI compatible (${CLAUDE_VER} at ${CLAUDE_PATH} — incompatible, see above)" 1
+    check "Compatibility Claude CLI compatible (${CLAUDE_VER} at ${CLAUDE_PATH} — incompatible, see above)" 1
   else
     if [ "$CTI_RUNTIME" = "claude" ]; then
-      check "Claude CLI available (not found in PATH or common locations)" 1
+      check "Compatibility Claude CLI available (not found in PATH or common locations)" 1
     else
-      check "Claude CLI available (not found — will use Codex fallback)" 0
+      check "Compatibility Claude CLI available (not found; Codex fallback is available only in auto mode)" 0
     fi
   fi
 
@@ -155,13 +158,13 @@ if [ "$CTI_RUNTIME" = "claude" ] || [ "$CTI_RUNTIME" = "auto" ]; then
   fi
   if [ -n "$CLAUDE_PATH" ] && [ "$CLAUDE_COMPAT" = "0" ]; then
     if [ "$HAS_THIRD_PARTY_AUTH" = "true" ]; then
-      check "Claude CLI auth (skipped — using third-party API credentials from config.env)" 0
+      check "Compatibility Claude CLI auth (skipped — using third-party API credentials from config.env)" 0
     else
       AUTH_OUT=$("$CLAUDE_PATH" auth status 2>&1 || true)
       if echo "$AUTH_OUT" | grep -qiE 'loggedIn.*true|logged.in'; then
-        check "Claude CLI authenticated" 0
+        check "Compatibility Claude CLI authenticated" 0
       else
-        check "Claude CLI authenticated (run 'claude auth login')" 1
+        check "Compatibility Claude CLI authenticated (run 'claude auth login')" 1
       fi
     fi
   fi
@@ -177,16 +180,16 @@ if [ "$CTI_RUNTIME" = "claude" ] || [ "$CTI_RUNTIME" = "auto" ]; then
     fi
   fi
   if [ "$HAS_ANTHROPIC_CONFIG" = "true" ]; then
-    check "ANTHROPIC_* vars in config.env (third-party API provider)" 0
+    check "Compatibility ANTHROPIC_* vars in config.env (third-party API provider)" 0
 
     PLIST_FILE="$HOME/Library/LaunchAgents/com.claude-to-im.bridge.plist"
 
     # On macOS, verify the launchd plist also has the vars
     if [ "$(uname -s)" = "Darwin" ] && [ -f "$PLIST_FILE" ]; then
       if grep -q "ANTHROPIC_" "$PLIST_FILE" 2>/dev/null; then
-        check "ANTHROPIC_* vars in launchd plist" 0
+        check "Compatibility ANTHROPIC_* vars in launchd plist" 0
       else
-        check "ANTHROPIC_* vars in launchd plist (NOT present — restart bridge to regenerate plist)" 1
+        check "Compatibility ANTHROPIC_* vars in launchd plist (NOT present — restart bridge to regenerate plist)" 1
       fi
     fi
 
@@ -199,13 +202,13 @@ if [ "$CTI_RUNTIME" = "claude" ] || [ "$CTI_RUNTIME" = "auto" ]; then
       # ps eww shows the process environment on macOS/Linux
       PROC_ENV=$(ps eww -p "$BRIDGE_PID" 2>/dev/null || true)
       if echo "$PROC_ENV" | grep -q "ANTHROPIC_"; then
-        check "Running bridge process has ANTHROPIC_* env vars" 0
+        check "Running bridge process has compatibility ANTHROPIC_* env vars" 0
       else
-        check "Running bridge process has ANTHROPIC_* env vars (NOT in process env — restart the bridge)" 1
+        check "Running bridge process has compatibility ANTHROPIC_* env vars (NOT in process env — restart the bridge)" 1
       fi
     fi
   else
-    check "ANTHROPIC_* vars in config.env (not set — OK if using default Anthropic auth)" 0
+    check "Compatibility ANTHROPIC_* vars in config.env (not set — OK unless explicitly using Claude compatibility runtime)" 0
   fi
 
   # --- SDK cli.js resolvable ---
@@ -247,7 +250,7 @@ if [ "$CTI_RUNTIME" = "codex" ] || [ "$CTI_RUNTIME" = "auto" ]; then
     if [ "$CTI_RUNTIME" = "codex" ]; then
       check "Codex CLI available (not found in PATH)" 1
     else
-      check "Codex CLI available (not found — will use Claude)" 0
+      check "Codex CLI available (not found; compatibility fallback may be needed only if explicitly configured)" 0
     fi
   fi
 
@@ -339,17 +342,17 @@ if [ -f "$CONFIG_FILE" ]; then
   CTI_CHANNELS=$(get_config CTI_ENABLED_CHANNELS)
 
   # --- Telegram ---
-  if echo "$CTI_CHANNELS" | grep -q telegram; then
+  if [ "$INCLUDE_COMPAT_DOCTOR" = "true" ] && echo "$CTI_CHANNELS" | grep -q telegram; then
     TG_TOKEN=$(get_config CTI_TG_BOT_TOKEN)
     if [ -n "$TG_TOKEN" ]; then
       TG_RESULT=$(curl -s --max-time 5 "https://api.telegram.org/bot${TG_TOKEN}/getMe" 2>/dev/null || echo '{"ok":false}')
       if echo "$TG_RESULT" | grep -q '"ok":true'; then
-        check "Telegram bot token is valid" 0
+        check "Compatibility Telegram bot token is valid" 0
       else
-        check "Telegram bot token is valid (getMe failed)" 1
+        check "Compatibility Telegram bot token is valid (getMe failed)" 1
       fi
     else
-      check "Telegram bot token configured" 1
+      check "Compatibility Telegram bot token configured" 1
     fi
   fi
 
@@ -374,7 +377,7 @@ if [ -f "$CONFIG_FILE" ]; then
   fi
 
   # --- QQ ---
-  if echo "$CTI_CHANNELS" | grep -q qq; then
+  if [ "$INCLUDE_COMPAT_DOCTOR" = "true" ] && echo "$CTI_CHANNELS" | grep -q qq; then
     QQ_APP_ID=$(get_config CTI_QQ_APP_ID)
     QQ_APP_SECRET=$(get_config CTI_QQ_APP_SECRET)
     if [ -n "$QQ_APP_ID" ] && [ -n "$QQ_APP_SECRET" ]; then
@@ -383,39 +386,39 @@ if [ -f "$CONFIG_FILE" ]; then
         -d "{\"appId\":\"${QQ_APP_ID}\",\"clientSecret\":\"${QQ_APP_SECRET}\"}" 2>/dev/null || echo '{}')
       QQ_ACCESS_TOKEN=$(echo "$QQ_TOKEN_RESULT" | sed -n 's/.*"access_token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
       if [ -n "$QQ_ACCESS_TOKEN" ]; then
-        check "QQ app credentials are valid (access_token obtained)" 0
+        check "Compatibility QQ app credentials are valid (access_token obtained)" 0
         # Verify gateway availability
         QQ_GW_RESULT=$(curl -s --max-time 10 "https://api.sgroup.qq.com/gateway" \
           -H "Authorization: QQBot ${QQ_ACCESS_TOKEN}" 2>/dev/null || echo '{}')
         if echo "$QQ_GW_RESULT" | grep -q '"url"'; then
-          check "QQ gateway is reachable" 0
+          check "Compatibility QQ gateway is reachable" 0
         else
-          check "QQ gateway is reachable (GET /gateway failed)" 1
+          check "Compatibility QQ gateway is reachable (GET /gateway failed)" 1
         fi
       else
-        check "QQ app credentials are valid (getAppAccessToken failed)" 1
+        check "Compatibility QQ app credentials are valid (getAppAccessToken failed)" 1
       fi
     else
-      check "QQ app credentials configured" 1
+      check "Compatibility QQ app credentials configured" 1
     fi
   fi
 
   # --- Discord ---
-  if echo "$CTI_CHANNELS" | grep -q discord; then
+  if [ "$INCLUDE_COMPAT_DOCTOR" = "true" ] && echo "$CTI_CHANNELS" | grep -q discord; then
     DC_TOKEN=$(get_config CTI_DISCORD_BOT_TOKEN)
     if [ -n "$DC_TOKEN" ]; then
       if echo "${DC_TOKEN}" | grep -qE '^[A-Za-z0-9_-]{20,}\.'; then
-        check "Discord bot token format" 0
+        check "Compatibility Discord bot token format" 0
       else
-        check "Discord bot token format (does not match expected pattern)" 1
+        check "Compatibility Discord bot token format (does not match expected pattern)" 1
       fi
     else
-      check "Discord bot token configured" 1
+      check "Compatibility Discord bot token configured" 1
     fi
   fi
 
   # --- Weixin ---
-  if echo "$CTI_CHANNELS" | grep -q weixin; then
+  if [ "$INCLUDE_COMPAT_DOCTOR" = "true" ] && echo "$CTI_CHANNELS" | grep -q weixin; then
     WX_ACCOUNTS_FILE="$CTI_HOME/data/weixin-accounts.json"
     if [ -f "$WX_ACCOUNTS_FILE" ]; then
       WX_COUNTS=$(node -e '
@@ -429,15 +432,15 @@ if [ -f "$CONFIG_FILE" ]; then
       WX_TOTAL="${WX_COUNTS##*:}"
       if [ "${WX_ENABLED:-0}" -ge 1 ] 2>/dev/null; then
         if [ "${WX_TOTAL:-0}" -gt 1 ] 2>/dev/null; then
-          check "Weixin linked account store (single-account mode; ${WX_TOTAL} records on disk, newest enabled record will be used)" 0
+          check "Compatibility Weixin linked account store (single-account mode; ${WX_TOTAL} records on disk, newest enabled record will be used)" 0
         else
-          check "Weixin linked account store (single linked account ready)" 0
+          check "Compatibility Weixin linked account store (single linked account ready)" 0
         fi
       else
-        check "Weixin linked account store (found file, but no enabled linked account with token — run 'cd $SKILL_DIR && npm run weixin:login')" 1
+        check "Compatibility Weixin linked account store (found file, but no enabled linked account with token — run 'cd $SKILL_DIR && npm run compat:weixin-login')" 1
       fi
     else
-      check "Weixin linked account store (missing — run 'cd $SKILL_DIR && npm run weixin:login')" 1
+      check "Compatibility Weixin linked account store (missing — run 'cd $SKILL_DIR && npm run compat:weixin-login')" 1
     fi
   fi
 fi
@@ -489,7 +492,6 @@ if [ "$FAIL" -gt 0 ]; then
   echo "  SDK cli.js missing    → cd $SKILL_DIR && npm install"
   echo "  dist/daemon.mjs stale → cd $SKILL_DIR && npm run build"
   echo "  config.env missing    → run setup wizard"
-  echo "  Weixin linked account missing→ cd $SKILL_DIR && npm run weixin:login"
   echo "  Stale PID file        → run stop, then start"
 fi
 

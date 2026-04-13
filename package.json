@@ -1,13 +1,13 @@
 {
-  "name": "claude-to-im-skill",
+  "name": "codex-feishu-bridge-skill",
   "version": "0.1.0",
-  "description": "Claude Code Skill: Bridge IM platforms (Telegram, Discord, Feishu, QQ, WeChat) to Claude Code sessions",
+  "description": "Codex ↔ Feishu bridge skill",
   "type": "module",
   "scripts": {
     "build": "node scripts/build.js",
     "typecheck": "tsc --noEmit",
     "dev": "tsx src/main.ts",
-    "weixin:login": "node --import tsx src/weixin-login.ts",
+    "compat:weixin-login": "node --import tsx src/weixin-login.ts",
     "test": "node scripts/test.js"
   },
   "dependencies": {

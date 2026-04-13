@@ -102,16 +102,19 @@ function recentLogHasErrors(logFilePaths) {
 const nodeMajor = Number(process.versions.node.split('.')[0] || '0');
 check(`Node.js >= 20 (found v${process.versions.node})`, nodeMajor >= 20);
 
-const runtime = getConfig('CTI_RUNTIME') || 'claude';
+const runtime = getConfig('CTI_RUNTIME') || 'codex';
+const includeCompatibilityDoctor = process.env.CTI_INCLUDE_COMPAT_DOCTOR === 'true';
+console.log('Codex ↔ Feishu doctor');
 console.log(`Runtime: ${runtime}`);
 console.log('');
 
-if (runtime === 'claude' || runtime === 'auto') {
+if (includeCompatibilityDoctor && (runtime === 'claude' || runtime === 'auto')) {
+  console.log('Compatibility runtime checks: Claude');
   const hasClaude = commandExists('claude');
   check(
     hasClaude
-      ? `Claude CLI available (${readCommandOutput('claude', ['--version']) || 'unknown'})`
-      : 'Claude CLI available (not found in PATH)',
+      ? `Compatibility Claude CLI available (${readCommandOutput('claude', ['--version']) || 'unknown'})`
+      : 'Compatibility Claude CLI available (not found in PATH)',
     runtime === 'auto' ? true : hasClaude,
   );
 
@@ -120,8 +123,8 @@ if (runtime === 'claude' || runtime === 'auto') {
     const hasThirdPartyAuth = Boolean(getConfig('ANTHROPIC_API_KEY') || getConfig('ANTHROPIC_AUTH_TOKEN'));
     check(
       hasThirdPartyAuth
-        ? 'Claude CLI auth (skipped — using third-party API credentials from config.env)'
-        : 'Claude CLI authenticated',
+        ? 'Compatibility Claude CLI auth (skipped — using third-party API credentials from config.env)'
+        : 'Compatibility Claude CLI authenticated',
       hasThirdPartyAuth || /loggedIn.*true|logged.in/i.test(authStatus),
     );
   }

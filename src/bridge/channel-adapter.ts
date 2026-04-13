@@ -1,8 +1,8 @@
 /**
- * Abstract base class for IM channel adapters.
+ * Abstract base class for bridge channel adapters.
  *
- * Each adapter (Telegram, Discord, Slack, ...) extends this class to provide
- * platform-specific message consumption and delivery.
+ * Feishu is the maintained product path; other adapters use this base for
+ * compatibility or future-facing work.
  */
 
 import type {

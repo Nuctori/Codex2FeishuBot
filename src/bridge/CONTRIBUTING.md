@@ -1,4 +1,4 @@
-# Contributing to Claude-to-IM
+# Contributing to Codex ↔ Feishu
 
 ## Development Setup
 
@@ -8,7 +8,9 @@ npm run typecheck        # Type checking
 npm run test:unit        # Unit tests
 ```
 
-## Adding a New Adapter
+## Adding a Compatibility Adapter
+
+The maintained product path is `Codex ↔ Feishu`. Add or modify other adapters only when the task explicitly targets compatibility work.
 
 1. Create `adapters/my-adapter.ts` extending `BaseChannelAdapter`
 2. Implement all required methods (see `channel-adapter.ts`)

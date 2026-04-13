@@ -1,44 +1,23 @@
-# Token Validation Commands
+# Codex ↔ Feishu Token Validation
 
-After writing config.env, validate each enabled platform's credentials to catch typos and configuration errors early.
-
-## Telegram
+Validate the Feishu app credentials before starting the bridge.
 
 ```bash
-curl -s "https://api.telegram.org/bot${TOKEN}/getMe"
-```
-Expected: response contains `"ok":true`. If not, the Bot Token is invalid — re-check with @BotFather.
-
-## Discord
-
-Verify token format matches: `[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+`
-
-A format mismatch means the token was copied incorrectly from the Discord Developer Portal.
-
-## Feishu / Lark
-
-```bash
-curl -s -X POST "${DOMAIN}/open-apis/auth/v3/tenant_access_token/internal" \
+curl -s -X POST "${DOMAIN:-https://open.feishu.cn}/open-apis/auth/v3/tenant_access_token/internal" \
   -H "Content-Type: application/json" \
   -d '{"app_id":"...","app_secret":"..."}'
 ```
-Expected: response contains `"code":0`. If not, check that App ID and App Secret match the Feishu Developer Console.
 
-## QQ
+Expected result:
 
-Step 1 — Get access token:
-```bash
-curl -s -X POST "https://bots.qq.com/app/getAppAccessToken" \
-  -H "Content-Type: application/json" \
-  -d '{"appId":"...","clientSecret":"..."}'
+```json
+{"code":0}
 ```
-Expected: response contains `access_token`.
 
-Step 2 — Verify gateway connectivity:
-```bash
-curl -s "https://api.sgroup.qq.com/gateway" \
-  -H "Authorization: QQBot <access_token>"
-```
-Expected: response contains a gateway URL.
+If validation fails, verify:
 
-If either step fails, verify the App ID and App Secret from https://q.qq.com.
+1. App ID and App Secret belong to the same Feishu app
+2. The app has been published and approved
+3. The configured domain matches the deployment
+
+Compatibility note: validation flows for non-Feishu channels are intentionally omitted from this maintained-path guide.

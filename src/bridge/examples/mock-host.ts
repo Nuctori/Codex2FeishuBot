@@ -1,7 +1,7 @@
 /**
  * Minimal Mock Host Example
  *
- * Demonstrates how to wire up Claude-to-IM with mock implementations
+ * Demonstrates how to wire up the Codex ↔ Feishu runtime with mock implementations
  * of all host interfaces. This runs the full bridge pipeline without
  * any real database, LLM, or permission system.
  *
@@ -168,7 +168,7 @@ class EchoLLM implements LLMProvider {
 // ── Main ────────────────────────────────────────────────────
 
 async function main() {
-  console.log('=== Claude-to-IM Mock Host Example ===\n');
+  console.log('=== Codex ↔ Feishu Mock Host Example ===\n');
 
   // 1. Initialize context
   initBridgeContext({
@@ -182,7 +182,7 @@ async function main() {
   });
 
   // 2. Simulate an inbound message
-  const address = { channelType: 'telegram', chatId: '12345', displayName: 'Test User' };
+  const address = { channelType: 'feishu', chatId: '12345', displayName: 'Test User' };
 
   console.log('Resolving channel binding...');
   const binding = router.resolve(address);
@@ -190,8 +190,8 @@ async function main() {
   console.log(`  CWD: ${binding.workingDirectory}\n`);
 
   // 3. Process message through conversation engine
-  console.log('Processing message: "Hello, Claude!"');
-  const result = await engine.processMessage(binding, 'Hello, Claude!');
+  console.log('Processing message: "Hello, Codex!"');
+  const result = await engine.processMessage(binding, 'Hello, Codex!');
 
   console.log(`\nResult:`);
   console.log(`  Response: "${result.responseText}"`);

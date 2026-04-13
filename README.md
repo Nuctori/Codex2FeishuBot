@@ -1,107 +1,80 @@
-# Claude-to-IM Skill
+# Codex ↔ Feishu
 
-Bridge Claude Code / Codex to IM platforms — chat with AI coding agents from Telegram, Discord, Feishu/Lark, QQ, or WeChat.
+Primary product focus: continue live Codex coding sessions from Feishu.
 
 [中文文档](README_CN.md)
 
-> **Want a desktop GUI instead?** Check out [CodePilot](https://github.com/op7418/CodePilot) — a full-featured desktop app with visual chat interface, session management, file tree preview, permission controls, and more. This skill was extracted from CodePilot's IM bridge module for users who prefer a lightweight, CLI-only setup.
+> **Compatibility note:** the installed skill name, command, and legacy data path `~/.claude-to-im/` remain for now, so existing Codex workflows keep working while the product branding moves toward `Codex ↔ Feishu`.
+>
+> **Architecture note:** the repository still contains broader IM / provider abstractions, but those are compatibility or future-facing layers rather than the current product promise.
 
 ---
 
-## How It Works
+## What This Project Is
 
-This skill runs a background daemon that connects your IM bots to Claude Code or Codex sessions. Messages from IM are forwarded to the AI coding agent, and responses (including tool use, permission requests, streaming previews) are sent back to your chat.
+This project runs a local background daemon that binds a Feishu bot to Codex sessions. Messages from Feishu are forwarded into Codex, and Codex responses are pushed back as mobile-friendly cards and text updates.
 
+```text
+You (Feishu)
+  -> Feishu bot + card callbacks
+Local bridge daemon (Node.js)
+  -> Codex CLI / Codex SDK
+Codex
+  -> reads and writes your workspace
 ```
-You (Telegram/Discord/Feishu/QQ/WeChat)
-  ↕ Bot API
-Background Daemon (Node.js)
-  ↕ Claude Agent SDK or Codex SDK (configurable via CTI_RUNTIME)
-Claude Code / Codex → reads/writes your codebase
-```
+
+The maintained path is `Codex ↔ Feishu`. Anything else in the repository should be treated as reserved implementation space unless explicitly requested.
+
+## Product Scope
+
+- **Maintained now:** Codex session continuation from Feishu
+- **Maintained now:** project/session browsing, session binding, permission cards, streaming/status updates
+- **Compatibility only:** legacy install path `claude-to-im`
+- **Compatibility only:** generic adapter/provider abstractions still in-tree
+- **Not the current product promise:** general-purpose multi-IM bridge positioning
 
 ## Features
 
-- **Five IM platforms** — Telegram, Discord, Feishu/Lark, QQ, WeChat — enable any combination
-- **Interactive setup** — guided wizard collects tokens with step-by-step instructions
-- **Permission control** — tool calls require explicit approval via inline buttons (Telegram/Discord) or text `/perm` commands / quick `1/2/3` replies (Feishu/QQ/WeChat)
-- **Streaming preview** — see Claude's response as it types (Telegram & Discord)
-- **Session persistence** — conversations survive daemon restarts
-- **Secret protection** — tokens stored with `chmod 600`, auto-redacted in all logs
-- **Zero code required** — install the skill and run `/claude-to-im setup`, or tell Codex `claude-to-im setup`
+- **Feishu-first session control** — project list, session list, open-session dock, and in-card session switching
+- **Codex-native workflow** — forwards Feishu messages into live Codex sessions instead of creating a separate bot-only memory silo
+- **Permission flow for mobile** — card approvals plus quick `1 / 2 / 3` reply fallback
+- **Persistent bindings** — session bindings and mirrors survive bridge restarts
+- **Windows-friendly operations** — PowerShell install, watchdog startup, dual-log diagnostics, service helpers
 
 ## Prerequisites
 
 - **Node.js >= 20**
-- **Claude Code CLI** (for `CTI_RUNTIME=claude` or `auto`) — installed and authenticated (`claude` command available)
-- **Codex CLI** (for `CTI_RUNTIME=codex` or `auto`) — `npm install -g @openai/codex`. Auth: run `codex auth login`, or set `OPENAI_API_KEY` (optional, for API mode)
+- **Codex CLI** — install with `npm install -g @openai/codex`, then authenticate with `codex auth login` or `OPENAI_API_KEY`
+- **Feishu app credentials** — App ID + App Secret for a self-built app with bot capability enabled
 
 ## Installation
 
-Choose the section that matches the AI agent product you actually use.
+Install into Codex and keep using the legacy `claude-to-im` command name for compatibility.
 
-### Claude Code
-
-#### Recommended: `npx skills`
+### Recommended: Codex install script
 
 ```bash
-npx skills add op7418/Claude-to-IM-skill
+git clone https://github.com/op7418/Claude-to-IM-skill.git ~/code/codex-feishu-bridge
+bash ~/code/codex-feishu-bridge/scripts/install-codex.sh
 ```
 
-After installation, tell Claude Code:
-
-```text
-/claude-to-im setup
-```
-
-If you want WeChat specifically, you can also say:
-
-```text
-帮我接微信
-```
-
-#### Alternative: clone directly into Claude Code skills
-
-```bash
-git clone https://github.com/op7418/Claude-to-IM-skill.git ~/.claude/skills/claude-to-im
-```
-
-Claude Code discovers it automatically.
-
-#### Alternative: symlink for development
-
-```bash
-git clone https://github.com/op7418/Claude-to-IM-skill.git ~/code/Claude-to-IM-skill
-mkdir -p ~/.claude/skills
-ln -s ~/code/Claude-to-IM-skill ~/.claude/skills/claude-to-im
-```
-
-### Codex
-
-#### Recommended: use the Codex install script
-
-```bash
-git clone https://github.com/op7418/Claude-to-IM-skill.git ~/code/Claude-to-IM-skill
-bash ~/code/Claude-to-IM-skill/scripts/install-codex.sh
-```
-
-On Windows PowerShell:
+Windows PowerShell:
 
 ```powershell
-git clone https://github.com/op7418/Claude-to-IM-skill.git $env:USERPROFILE\code\Claude-to-IM-skill
-powershell -ExecutionPolicy Bypass -File $env:USERPROFILE\code\Claude-to-IM-skill\scripts\install-codex.ps1
+git clone https://github.com/op7418/Claude-to-IM-skill.git $env:USERPROFILE\code\codex-feishu-bridge
+powershell -ExecutionPolicy Bypass -File $env:USERPROFILE\code\codex-feishu-bridge\scripts\install-codex.ps1
 ```
 
 For local development with a live checkout:
 
 ```bash
-bash ~/code/Claude-to-IM-skill/scripts/install-codex.sh --link
+bash ~/code/codex-feishu-bridge/scripts/install-codex.sh --link
 ```
 
 Windows PowerShell development install:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File $env:USERPROFILE\code\Claude-to-IM-skill\scripts\install-codex.ps1 -Link
+powershell -ExecutionPolicy Bypass -File $env:USERPROFILE\code\codex-feishu-bridge\scripts\install-codex.ps1 -Link
 ```
 
 The install script places the skill under `~/.codex/skills/claude-to-im`, installs dependencies, and builds the daemon.
@@ -112,13 +85,7 @@ After installation, tell Codex:
 claude-to-im setup
 ```
 
-If you want WeChat specifically, you can also say:
-
-```text
-帮我接微信桥接
-```
-
-#### Alternative: clone directly into Codex skills
+### Alternative: clone directly into Codex skills
 
 ```bash
 git clone https://github.com/op7418/Claude-to-IM-skill.git ~/.codex/skills/claude-to-im
@@ -127,54 +94,24 @@ npm install
 npm run build
 ```
 
-### Verify installation
+## Verify Installation
 
-**Claude Code:** Start a new session and type `/` — you should see `claude-to-im` in the skill list. Or ask Claude: "What skills are available?"
+Start a new Codex session and say `claude-to-im setup`, `start bridge`, or `bridge status`.
 
-**Codex:** Start a new session and say `claude-to-im setup`, `start bridge`, or `帮我接微信桥接`.
-
-## Updating the Skill
-
-Choose the update flow that matches both your AI agent product and your installation method.
-
-### Claude Code
-
-If you installed with `npx skills`, re-run:
-
-```bash
-npx skills add op7418/Claude-to-IM-skill
-```
-
-If you installed via `git clone` or symlink:
-
-```bash
-cd ~/.claude/skills/claude-to-im
-git pull
-npm install
-npm run build
-```
-
-Then tell Claude Code:
-
-```text
-/claude-to-im doctor
-/claude-to-im start
-```
-
-### Codex
+## Updating
 
 If you installed with the Codex install script in copy mode:
 
 ```bash
 rm -rf ~/.codex/skills/claude-to-im
-bash ~/code/Claude-to-IM-skill/scripts/install-codex.sh
+bash ~/code/codex-feishu-bridge/scripts/install-codex.sh
 ```
 
 Windows PowerShell:
 
 ```powershell
 Remove-Item -Recurse -Force $env:USERPROFILE\.codex\skills\claude-to-im
-powershell -ExecutionPolicy Bypass -File $env:USERPROFILE\code\Claude-to-IM-skill\scripts\install-codex.ps1
+powershell -ExecutionPolicy Bypass -File $env:USERPROFILE\code\codex-feishu-bridge\scripts\install-codex.ps1
 ```
 
 If you installed with `--link` or cloned directly into the Codex skills directory:
@@ -195,208 +132,98 @@ start bridge
 
 ## Quick Start
 
-### 1. Setup
-
-**Claude Code**
-
-```text
-/claude-to-im setup
-```
-
-**Codex**
+### 1. Run setup
 
 ```text
 claude-to-im setup
 ```
 
-The wizard will guide you through:
+The setup flow for the maintained product path covers:
 
-1. **Choose channels** — pick Telegram, Discord, Feishu, QQ, WeChat, or any combination
-2. **Enter credentials** — the wizard explains exactly where to get each token, which settings to enable, and what permissions to grant
-3. **Set defaults** — working directory, model, and mode
-4. **Validate** — tokens are verified against platform APIs immediately
+1. **Feishu credentials** — App ID, App Secret, domain, permissions, bot capability, callbacks
+2. **Codex defaults** — workspace, model, runtime mode
+3. **Validation** — configuration and connectivity checks before launch
 
-### 2. Start
-
-**Claude Code**
-
-```text
-/claude-to-im start
-```
-
-**Codex**
+### 2. Start the bridge
 
 ```text
 start bridge
 ```
 
-The daemon starts in the background. You can close the terminal — it keeps running.
+The daemon runs in the background, so your terminal can close after startup.
 
-### 3. Chat
+### 3. Continue the session from Feishu
 
-Open your IM app and send a message to your bot. Claude Code / Codex will respond through the bridge.
-
-When Claude needs to use a tool (edit a file, run a command), you'll see a permission prompt with **Allow** / **Deny** buttons right in the chat (Telegram/Discord), or a text `/perm` command prompt / quick `1/2/3` replies (Feishu/QQ/WeChat).
+Open Feishu and send a message to your bot. Codex responses, tool progress, and permission prompts are returned through the bridge.
 
 ## Commands
 
-All commands are run inside Claude Code or Codex:
+All commands are intended for Codex. The legacy command name is still `claude-to-im`.
 
-| Claude Code | Codex (natural language) | Description |
-|---|---|---|
-| `/claude-to-im setup` | "claude-to-im setup" / "配置" | Interactive setup wizard |
-| `/claude-to-im start` | "start bridge" / "启动桥接" | Start the bridge daemon |
-| `/claude-to-im stop` | "stop bridge" / "停止桥接" | Stop the bridge daemon |
-| `/claude-to-im status` | "bridge status" / "状态" | Show daemon status |
-| `/claude-to-im logs` | "查看日志" | Show last 50 log lines |
-| `/claude-to-im logs 200` | "logs 200" | Show last 200 log lines |
-| `/claude-to-im reconfigure` | "reconfigure" / "修改配置" | Update config interactively |
-| `/claude-to-im doctor` | "doctor" / "诊断" | Diagnose issues |
+| Command or phrase | Description |
+|---|---|
+| `claude-to-im setup` / `配置桥接` | Configure the Codex ↔ Feishu bridge |
+| `start bridge` / `启动桥接` | Start the background daemon |
+| `stop bridge` / `停止桥接` | Stop the daemon |
+| `bridge status` / `查看桥接状态` | Show daemon status |
+| `logs` / `logs 200` / `查看日志` | Show recent bridge logs |
+| `reconfigure` / `修改配置` | Update bridge configuration |
+| `doctor` / `诊断桥接` | Diagnose install or runtime issues |
 
-## Platform Setup Guides
+## Feishu Setup Checklist
 
-The `setup` wizard provides inline guidance for every step. Here's a summary:
+The `setup` flow provides inline guidance. At a high level you need:
 
-### Telegram
+1. Go to [Feishu Open Platform](https://open.feishu.cn/app) or [Lark Open Platform](https://open.larksuite.com/app)
+2. Create a custom app and copy **App ID** + **App Secret**
+3. Batch-add the permissions required by this bridge
+4. Enable the **Bot** capability
+5. Configure **long connection** events and card callbacks
+6. Publish the app version and complete admin approval
 
-1. Message `@BotFather` on Telegram → `/newbot` → follow prompts
-2. Copy the bot token (format: `123456789:AABbCc...`)
-3. Recommended: `/setprivacy` → Disable (for group use)
-4. Find your User ID: message `@userinfobot`
+If callbacks or permission cards fail after an upgrade, re-check scopes, callback registrations, and publish status first.
 
-### Discord
+## Legacy Runtime Data Path
 
-1. Go to [Discord Developer Portal](https://discord.com/developers/applications) → New Application
-2. Bot tab → Reset Token → copy it
-3. Enable **Message Content Intent** under Privileged Gateway Intents
-4. OAuth2 → URL Generator → scope `bot` → permissions: Send Messages, Read Message History, View Channels → copy invite URL
-
-### Feishu / Lark
-
-1. Go to [Feishu Open Platform](https://open.feishu.cn/app) (or [Lark](https://open.larksuite.com/app))
-2. Create Custom App → get App ID and App Secret
-3. **Batch-add permissions**: go to "Permissions & Scopes" → use batch configuration to add all required scopes (the `setup` wizard provides the exact JSON)
-4. Enable Bot feature under "Add Features"
-5. **Events & Callbacks**: select **"Long Connection"** as event dispatch method → add `im.message.receive_v1` event
-6. **Publish**: go to "Version Management & Release" → create version → submit for review → approve in Admin Console
-7. **Important**: The bot will NOT work until the version is approved and published
-
-### QQ
-
-> QQ currently supports **C2C private chat only**. No group/channel support, no inline permission buttons, no streaming preview. Permissions use text `/perm ...` commands. Image inbound only (no image replies).
-
-1. Go to [QQ Bot OpenClaw](https://q.qq.com/qqbot/openclaw)
-2. Create a QQ Bot or select an existing one → get **App ID** and **App Secret** (only two required fields)
-3. Configure sandbox access and scan QR code with QQ to add the bot
-4. `CTI_QQ_ALLOWED_USERS` takes `user_openid` values (not QQ numbers) — can be left empty initially
-5. Set `CTI_QQ_IMAGE_ENABLED=false` if the underlying provider doesn't support image input
-
-### WeChat / Weixin
-
-> WeChat currently uses QR login, single-account mode, text-based permissions, and no streaming preview.
-
-1. Run the local QR helper from your installed skill directory:
-   - Claude Code default install: `cd ~/.claude/skills/claude-to-im && npm run weixin:login`
-   - Codex default install: `cd ~/.codex/skills/claude-to-im && npm run weixin:login`
-2. The helper writes `~/.claude-to-im/runtime/weixin-login.html` and tries to open it in your browser automatically
-3. Scan the QR code with WeChat and confirm on your phone
-4. On success, the linked account is stored in `~/.claude-to-im/data/weixin-accounts.json`
-5. Running the helper again replaces the previously linked WeChat account
-
-Additional notes:
-
-- `CTI_WEIXIN_MEDIA_ENABLED` controls inbound image/file/video downloads only
-- Voice messages only use WeChat's own built-in speech-to-text text
-- If WeChat does not provide `voice_item.text`, the bridge replies with an error instead of downloading/transcribing raw voice audio
-- Permission approvals use text `/perm ...` commands or quick `1/2/3` replies
-
-## Architecture
-
-```
-~/.claude-to-im/
-├── config.env             ← Credentials & settings (chmod 600)
-├── data/                  ← Persistent JSON storage
+```text
+~/.claude-to-im/   # legacy data path retained for compatibility
+├── config.env
+├── data/
 │   ├── sessions.json
 │   ├── bindings.json
 │   ├── permissions.json
-│   └── messages/          ← Per-session message history
+│   └── messages/
 ├── logs/
-│   └── bridge.log         ← Auto-rotated, secrets redacted
+│   └── bridge.log
 └── runtime/
-    ├── bridge.pid          ← Daemon PID file
-    └── status.json         ← Current status
+    ├── bridge.pid
+    └── status.json
 ```
 
-### Release notes
-
-- The bridge runtime shipped by this repo now lives under `src/bridge`, so published builds do not depend on private source files inside `node_modules/claude-to-im/src/...`.
-- Platform-specific behavior is limited to thin process-hosting layers such as `scripts/supervisor-windows.ps1`, `scripts/daemon.sh`, and `src/windows-watchdog.ts`.
-- Session routing, Feishu navigation cards, permission handling, and message delivery stay inside the shared bridge/runtime layer, which keeps the business logic portable across platforms.
-
-### Key components
+## Key Components
 
 | Component | Role |
 |---|---|
-| `src/main.ts` | Daemon entry — assembles DI, starts bridge |
-| `src/config.ts` | Load/save `config.env`, map to bridge settings |
-| `src/store.ts` | JSON file BridgeStore (30 methods, write-through cache) |
-| `src/llm-provider.ts` | Claude Agent SDK `query()` → SSE stream |
-| `src/codex-provider.ts` | Codex SDK `runStreamed()` → SSE stream |
-| `src/sse-utils.ts` | Shared SSE formatting helper |
-| `src/permission-gateway.ts` | Async bridge: SDK `canUseTool` ↔ IM buttons |
-| `src/logger.ts` | Secret-redacted file logging with rotation |
-| `scripts/daemon.sh` | Process management (start/stop/status/logs) |
-| `scripts/doctor.sh` | Health checks |
-| `SKILL.md` | Claude Code skill definition |
-
-### Permission flow
-
-```
-1. Claude wants to use a tool (e.g., Edit file)
-2. SDK calls canUseTool() → LLMProvider emits permission_request SSE
-3. Bridge sends inline buttons to IM chat: [Allow] [Deny]
-4. canUseTool() blocks, waiting for user response (5 min timeout)
-5. User taps Allow → bridge resolves the pending permission
-6. SDK continues tool execution → result streamed back to IM
-```
+| `src/main.ts` | Daemon entry, dependency assembly, runtime startup |
+| `src/config.ts` | Loads and persists bridge config |
+| `src/store.ts` | JSON-backed bridge state storage |
+| `src/codex-provider.ts` | Codex runtime integration |
+| `src/permission-gateway.ts` | Permission request / approval bridge |
+| `src/logger.ts` | Redacted rotating logs |
+| `scripts/daemon.sh` | Start / stop / status / logs |
+| `scripts/doctor.sh` | Health diagnostics |
 
 ## Troubleshooting
 
-Run diagnostics:
+Run:
 
-```
-/claude-to-im doctor
-```
-
-This checks: Node.js version, config file existence and permissions, token validity (live API calls), log directory, PID file consistency, and recent errors.
-
-| Issue | Solution |
-|---|---|
-| `Bridge won't start` | Run `doctor`. Check if Node >= 20. Check logs. |
-| `Messages not received` | Verify token with `doctor`. Check allowed users config. |
-| `Permission timeout` | User didn't respond within 5 min. Tool call auto-denied. |
-| `Stale PID file` | Run `stop` then `start`. daemon.sh auto-cleans stale PIDs. |
-
-See [references/troubleshooting.md](references/troubleshooting.md) for more details.
-
-## Security
-
-- All credentials stored in `~/.claude-to-im/config.env` with `chmod 600`
-- Tokens are automatically redacted in all log output (pattern-based masking)
-- Allowed user/channel/guild lists restrict who can interact with the bot
-- The daemon is a local process with no inbound network listeners
-- See [SECURITY.md](SECURITY.md) for threat model and incident response
-
-## Development
-
-```bash
-npm install        # Install dependencies
-npm run dev        # Run in dev mode
-npm run typecheck  # Type check
-npm test           # Run tests
-npm run build      # Build bundle
+```text
+claude-to-im doctor
 ```
 
-## License
+Common fixes:
 
-[MIT](LICENSE)
+- Re-run `setup` if `~/.claude-to-im/config.env` is missing
+- Rebuild with `npm install && npm run build` if runtime files are stale
+- Re-check Feishu permissions, callbacks, and publish status if cards do not update
+- Restart the daemon after config changes with `stop bridge` then `start bridge`

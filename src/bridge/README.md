@@ -1,121 +1,45 @@
-# Claude-to-IM
+# Codex ↔ Feishu Runtime
 
-A host-agnostic bridge that connects IM platforms (Telegram, Discord, Feishu/Lark) to Claude, enabling AI-powered conversations through messaging apps.
+This package contains the shared bridge runtime used by the current `Codex ↔ Feishu` product path.
 
-## Features
+> Compatibility note: the runtime still contains adapter abstractions for other channels. Treat them as compatibility / future-facing layers unless a task explicitly targets them.
 
-- **Multi-platform**: Telegram (long polling), Discord (Gateway), Feishu/Lark (WSClient)
-- **Streaming previews**: Real-time response drafts via message editing
-- **Permission management**: Interactive inline buttons for tool approvals
-- **Session binding**: Each IM chat maps to a persistent conversation session
-- **Markdown rendering**: Platform-native formatting (HTML for Telegram, Discord Markdown, Feishu cards)
-- **Security**: Input validation, rate limiting, authorization, audit logging
-- **Reliable delivery**: Auto-chunking, retry with backoff, HTML fallback, dedup
+## Current Role
 
-## Architecture
+The maintained deployment is:
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│  IM Platform (Telegram / Discord / Feishu)                   │
-└──────────────┬───────────────────────────────────────────────┘
-               │ InboundMessage
-┌──────────────▼───────────────────────────────────────────────┐
-│  Adapter (platform-specific polling/websocket)               │
-└──────────────┬───────────────────────────────────────────────┘
-               │
-┌──────────────▼───────────────────────────────────────────────┐
-│  Bridge Manager (orchestrator)                               │
-│  ├── Channel Router   → session binding                      │
-│  ├── Conversation Engine → LLM streaming                     │
-│  ├── Permission Broker → tool approval flow                  │
-│  └── Delivery Layer   → chunking, retry, dedup               │
-└──────────────┬───────────────────────────────────────────────┘
-               │ Host Interfaces (DI)
-┌──────────────▼───────────────────────────────────────────────┐
-│  Host Application (implements BridgeStore, LLMProvider, etc.)│
-└──────────────────────────────────────────────────────────────┘
-```
+- Feishu receives messages and card actions
+- The bridge routes them into Codex sessions
+- Tool permissions, session bindings, and message delivery are coordinated in this runtime
 
-## Quick Start
+## Runtime Responsibilities
 
-### 1. Implement the host interfaces
+- **Session binding** — map Feishu chats and cards to Codex sessions
+- **Permission brokering** — coordinate approval requests for tool use
+- **Message delivery** — stream status, chunks, and final replies back to Feishu
+- **State persistence** — keep bindings, mirrors, and delivery metadata durable
+- **Compatibility adapters** — remain available in-tree, but are not the main product contract
 
-```typescript
-import type { BridgeStore, LLMProvider, PermissionGateway, LifecycleHooks } from './host';
+## Architecture Notes
 
-const store: BridgeStore = { /* your persistence layer */ };
-const llm: LLMProvider = { /* your LLM streaming implementation */ };
-const permissions: PermissionGateway = { /* your permission resolver */ };
-const lifecycle: LifecycleHooks = { /* optional lifecycle callbacks */ };
-```
+The runtime is host-agnostic at the code level, but the product-level maintained path is Feishu-first. The host application supplies persistence, model execution, and lifecycle hooks while this runtime handles routing and delivery concerns.
 
-### 2. Initialize the bridge context
+## Key Host Interfaces
 
-```typescript
-import { initBridgeContext } from './context';
+| Interface | Purpose |
+|---|---|
+| `BridgeStore` | Persistence for sessions, bindings, messages, settings |
+| `LLMProvider` | Model execution and streaming |
+| `PermissionGateway` | Tool approval resolution |
+| `LifecycleHooks` | Startup / shutdown notifications |
 
-initBridgeContext({ store, llm, permissions, lifecycle });
-```
+## Current Focus
 
-### 3. Start the bridge
+When editing this runtime, optimize first for:
 
-```typescript
-import * as bridgeManager from './bridge-manager';
+1. Codex session correctness
+2. Feishu card / callback correctness
+3. Durable session binding and replay safety
+4. Mobile-friendly delivery behavior
 
-await bridgeManager.start();
-```
-
-### 4. Check status
-
-```typescript
-const status = bridgeManager.getStatus();
-// { running: true, adapters: [{ channelType: 'telegram', running: true, ... }] }
-```
-
-## Host Interfaces
-
-The bridge requires four host interfaces (defined in `host.ts`):
-
-| Interface | Purpose | Key Methods |
-|-----------|---------|-------------|
-| `BridgeStore` | Persistence (sessions, bindings, messages, settings) | `getSetting`, `getSession`, `addMessage`, `acquireSessionLock`, ... |
-| `LLMProvider` | AI model streaming | `streamChat(params) → ReadableStream<string>` |
-| `PermissionGateway` | Tool permission resolution | `resolvePendingPermission(id, resolution) → boolean` |
-| `LifecycleHooks` | Bridge lifecycle notifications | `onBridgeStart?()`, `onBridgeStop?()` |
-
-See `host.ts` for full interface definitions and `hosts/codepilot.ts` for a reference implementation.
-
-## Adding a New Adapter
-
-1. Create a file in `adapters/` extending `BaseChannelAdapter`
-2. Call `registerAdapterFactory(channelType, factory)` for self-registration
-3. Import the file in `adapters/index.ts`
-
-The adapter must implement: `start()`, `stop()`, `isRunning()`, `consumeOne()`, `send()`, `validateConfig()`, `isAuthorized()`.
-
-Optional: `getPreviewCapabilities()`, `sendPreview()`, `endPreview()`, `onMessageStart()`, `onMessageEnd()`, `acknowledgeUpdate()`.
-
-## Configuration
-
-All settings are read via `BridgeStore.getSetting(key)`. Key settings:
-
-- `remote_bridge_enabled` — master switch
-- `bridge_auto_start` — auto-start on app launch
-- `bridge_{adapter}_enabled` — per-adapter toggle
-- `bridge_{adapter}_bot_token` — bot credentials
-- `bridge_{adapter}_allowed_users` — CSV of authorized user IDs
-- `bridge_{adapter}_stream_enabled` — streaming preview toggle
-
-## Security
-
-- Input validation: path traversal, command injection, null byte detection
-- Rate limiting: 20 messages/minute per chat (token bucket)
-- Authorization: per-adapter allowed users/channels/guilds
-- Audit logging: all inbound/outbound messages logged
-- Permission dedup: atomic claim-and-resolve prevents double-clicks
-
-See `security/validators.ts` and `security/rate-limiter.ts`.
-
-## License
-
-See the root LICENSE file.
+If you touch other adapters, keep them compatible, but do not let them drive the product narrative.

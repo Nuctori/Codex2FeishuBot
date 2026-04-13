@@ -1,69 +1,72 @@
-# Troubleshooting
+# Codex ↔ Feishu Troubleshooting
 
-## Bridge won't start
+## Bridge Won't Start
 
-**Symptoms**: `/claude-to-im start` fails or daemon exits immediately.
+Symptoms: `start bridge` fails or the daemon exits immediately.
 
-**Steps**:
+Steps:
 
-1. Run `/claude-to-im doctor` to identify the issue
-2. Check that Node.js >= 20 is installed: `node --version`
-3. Check that Claude Code CLI is available: `claude --version`
-4. Verify config exists: `ls -la ~/.claude-to-im/config.env`
-5. Check logs for startup errors: `/claude-to-im logs`
+1. Run `doctor`
+2. Check Node.js: `node --version`
+3. Check Codex: `codex --version`
+4. Verify the legacy data-path config exists: `~/.claude-to-im/config.env`
+5. Check logs: `logs 200`
 
-**Common causes**:
-- Missing or invalid config.env -- run `/claude-to-im setup`
-- Node.js not found or wrong version -- install Node.js >= 20
-- Port or resource conflict -- check if another instance is running with `/claude-to-im status`
+Common causes:
 
-## Messages not received
+- missing or invalid `config.env`
+- Node.js older than 20
+- Codex CLI missing or not authenticated
+- stale build output; run `npm install && npm run build`
 
-**Symptoms**: Bot is online but doesn't respond to messages.
+## Feishu Messages Not Received
 
-**Steps**:
+Symptoms: the Feishu bot is visible but does not respond.
 
-1. Verify the bot token is valid: `/claude-to-im doctor`
-2. Check allowed user IDs in config -- if set, only listed users can interact
-3. For Telegram: ensure you've sent `/start` to the bot first
-4. For Discord: verify the bot has been invited to the server with message read permissions
-5. For Feishu: confirm the app has been approved and event subscriptions are configured
-6. Check logs for incoming message events: `/claude-to-im logs 200`
+Steps:
 
-## Permission timeout
+1. Run `doctor`
+2. Confirm the Feishu app version is published and approved
+3. Confirm long-connection event `im.message.receive_v1` is configured
+4. Confirm callback `card.action.trigger` is configured
+5. Check `CTI_FEISHU_ALLOWED_USERS` if allowlists are enabled
+6. Check `logs 200` for incoming Feishu events
 
-**Symptoms**: Claude Code session starts but times out waiting for tool approval.
+## Permission Card Problems
 
-**Steps**:
+Symptoms: permission cards do not update, buttons do nothing, or approvals time out.
 
-1. The bridge runs Claude Code in non-interactive mode; ensure your Claude Code configuration allows the necessary tools
-2. Consider using `--allowedTools` in your configuration to pre-approve common tools
-3. Check network connectivity if the timeout occurs during API calls
+Steps:
 
-## High memory usage
+1. Confirm `cardkit:card:write` and `cardkit:card:read` scopes are enabled
+2. Confirm `im:message:update` is enabled
+3. Confirm `card.action.trigger` is configured
+4. Publish and approve a new Feishu app version after any permission or callback change
+5. Restart with `stop bridge` then `start bridge`
 
-**Symptoms**: The daemon process consumes increasing memory over time.
+## High Memory Usage
 
-**Steps**:
+Symptoms: the daemon process consumes increasing memory over time.
 
-1. Check current memory usage: `/claude-to-im status`
-2. Restart the daemon to reset memory:
-   ```
-   /claude-to-im stop
-   /claude-to-im start
-   ```
-3. If the issue persists, check how many concurrent sessions are active -- each Claude Code session consumes memory
-4. Review logs for error loops that may cause memory leaks
+Steps:
 
-## Stale PID file
+1. Check `bridge status`
+2. Review active sessions from the Feishu control card
+3. Archive stale sessions
+4. Restart with `stop bridge` then `start bridge`
 
-**Symptoms**: Status shows "running" but the process doesn't exist, or start refuses because it thinks a daemon is already running.
+## Stale PID File
 
-The daemon management script (`daemon.sh`) handles stale PID files automatically. If you still encounter issues:
+Symptoms: status says running but the process is gone, or startup refuses because a daemon is already recorded.
 
-1. Run `/claude-to-im stop` -- it will clean up the stale PID file
-2. If stop also fails, manually remove the PID file:
-   ```bash
-   rm ~/.claude-to-im/runtime/bridge.pid
-   ```
-3. Run `/claude-to-im start` to launch a fresh instance
+The daemon management script usually cleans stale PID files automatically. If needed:
+
+```bash
+rm ~/.claude-to-im/runtime/bridge.pid
+```
+
+Then run `start bridge` again.
+
+## Compatibility Note
+
+Troubleshooting for non-Feishu channels or non-Codex runtimes is intentionally excluded from this maintained-path guide.

@@ -1,20 +1,22 @@
-# CLAUDE.md — Project Guidelines for claude-to-im-skill
+# CLAUDE.md — Project Guidelines for Codex ↔ Feishu
 
 ## Replying to GitHub Issues
 
-When replying to user-reported issues, always include a **self-help prompt** at the end of the reply. Guide users to use their AI coding assistant (Claude Code / Codex) to diagnose and fix the problem themselves. Example:
+When replying to user-reported issues, always include a short **self-help prompt** at the end of the reply. Guide users to use Codex to diagnose and fix the problem themselves.
 
-> **自助排查提示：** 你可以直接在 Claude Code（或 Codex）中发送以下提示，让 AI 帮你诊断问题：
->
+Example:
+
+> **自助排查提示：** 你可以直接在 Codex 里发送下面这段话，让它先帮你诊断：
 > ```
-> 请帮我排查 claude-to-im 桥接服务的问题。
-> 1. 读取 ~/.claude-to-im/logs/bridge.log 最近 50 行日志
-> 2. 读取 ~/.claude-to-im/config.env 检查配置是否正确
-> 3. 运行 bash ~/.claude/skills/claude-to-im/scripts/doctor.sh 并分析输出
-> 4. 根据日志和配置给出具体的修复建议
+> 请帮我排查 Codex ↔ Feishu 的问题：
+> 1. 读取 ~/.claude-to-im/logs/bridge.log 最近 50 行
+> 2. 读取 ~/.claude-to-im/config.env 检查桥接配置
+> 3. 运行 ~/.codex/skills/claude-to-im/scripts/doctor.sh 并分析输出
+> 4. 根据日志、配置和诊断结果给出具体修复建议
 > ```
 
 This approach:
+
 - Reduces maintainer burden by enabling users to self-diagnose
-- Leverages the fact that users already have an AI coding assistant installed
-- Provides actionable next steps rather than just error explanations
+- Leverages the fact that users already have Codex installed
+- Provides actionable next steps instead of only explaining the error

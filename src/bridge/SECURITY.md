@@ -1,61 +1,46 @@
-# Claude-to-IM Security
+# Codex ↔ Feishu Runtime Security
+
+This document describes the security posture of the shared bridge runtime used by the maintained `Codex ↔ Feishu` deployment.
 
 ## Threat Model
 
-The bridge exposes an LLM to messages from IM platforms. Key threats:
+Key threats for the maintained path:
 
-1. **Unauthorized access**: Anyone who messages the bot gets LLM access
-2. **Prompt injection**: Malicious input via IM messages
-3. **Command injection**: Path traversal or shell metacharacters in /cwd commands
-4. **Denial of service**: Message flooding
-5. **Permission bypass**: Forged callback queries or double-click race conditions
+1. **Unauthorized Feishu access** — an unexpected sender attempts to reach Codex through the bot
+2. **Prompt injection** — hostile content is forwarded from chat into the coding session
+3. **Command or path abuse** — user-controlled inputs try to influence workdir or shell behavior
+4. **Permission spoofing** — forged or duplicated card actions attempt to approve tool use
+5. **Message flooding** — repeated requests try to degrade responsiveness or exhaust resources
 
 ## Mitigations
 
-### Authentication & Authorization
+### Authorization
 
-Each adapter implements `isAuthorized(userId, chatId)`:
-- **Telegram**: `telegram_bridge_allowed_users` CSV whitelist
-- **Discord**: `bridge_discord_allowed_users`, `_allowed_channels`, `_allowed_guilds` with group policy
-- **Feishu**: `bridge_feishu_allowed_users` + group policy + mention requirement
+- Feishu requests are validated against binding and allowlist rules
+- Card actions are tied back to the original pending permission context
+- Unknown or unauthorized senders are ignored without leaking extra state
 
-Unauthorized messages are silently dropped (no response leak).
+### Input Validation
 
-### Input Validation (`security/validators.ts`)
+- Working directory validation rejects traversal and suspicious shell characters
+- Session identifiers are validated before lookup or mutation
+- Dangerous inputs are sanitized or blocked before entering the runtime
 
-- `validateWorkingDirectory()`: Rejects relative paths, `..` traversal, shell metacharacters (`|;&$`)
-- `validateSessionId()`: Hex/UUID format, 32-64 chars
-- `isDangerousInput()`: Detects path traversal, command injection, null bytes, control characters
-- `sanitizeInput()`: Strips control characters (except `\n`, `\t`), enforces max length (10,000 chars)
-- `validateMode()`: Whitelist (`plan`, `code`, `ask`)
+### Permission Safety
 
-### Rate Limiting (`security/rate-limiter.ts`)
+- Callback origin is validated against the original chat / card context
+- Pending permission records are claimed atomically to prevent double approval
+- Short-window dedup prevents repeated forwards of the same permission prompt
 
-Token bucket algorithm: 20 messages/minute per chat ID. Idle buckets cleaned up periodically.
+### Auditability
 
-### Permission Security
+- Inbound and outbound bridge events are logged through the host store
+- Dangerous or truncated inputs are marked explicitly
+- Secret-bearing values are redacted before display
 
-- **Origin validation**: Callback must come from same chat AND same message ID as the original permission prompt
-- **Atomic dedup**: `markPermissionLinkResolved()` uses atomic check-and-set to prevent race conditions from concurrent button clicks
-- **In-memory dedup**: `recentPermissionForwards` map prevents duplicate forwarding (30s window)
+## Deployment Guidance
 
-### Audit Logging
-
-All inbound and outbound messages are logged via `store.insertAuditLog()` with:
-- Channel type, chat ID, direction, message ID, truncated summary
-- Dangerous input blocks are logged with `[BLOCKED]` prefix
-- Truncated inputs are logged with `[TRUNCATED]` prefix
-
-### Transport Security
-
-- All platform APIs use HTTPS
-- Bot tokens are stored in the host's settings store (not in bridge code)
-- Token masking in UI prevents accidental exposure
-
-## Recommendations for Deployments
-
-1. Always configure `allowed_users` — never run with open access
-2. Use separate bot tokens for bridge vs. notifications
-3. Monitor audit logs for unusual patterns
-4. Keep bot token rotation in your operational runbook
-5. Consider network-level restrictions (firewall, VPN) for the host application
+1. Prefer explicit Feishu allowlists
+2. Rotate app secrets through the Feishu Open Platform
+3. Re-verify callbacks and scopes after bridge upgrades
+4. Keep the bridge running as a normal user process, not an elevated service

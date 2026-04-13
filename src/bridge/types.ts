@@ -1,9 +1,8 @@
 /**
  * Bridge system types — shared across all bridge modules.
  *
- * The bridge connects external IM channels (Telegram, Discord, Slack)
- * to CodePilot chat sessions, allowing users to interact with Claude
- * from their preferred messaging platform.
+ * The maintained product path connects Feishu messages to Codex sessions.
+ * Generic channel shapes remain for compatibility adapters.
  */
 
 // Re-export bridge-local types from host.ts so consumers can import from one place

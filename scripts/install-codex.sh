@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Install claude-to-im skill for Codex.
+# Install the Codex ↔ Feishu skill into Codex.
 # Usage: bash scripts/install-codex.sh [--link]
 #   --link  Create a symlink instead of copying (for development)
 
@@ -10,22 +10,19 @@ CODEX_SKILLS_DIR="$HOME/.codex/skills"
 TARGET_DIR="$CODEX_SKILLS_DIR/$SKILL_NAME"
 SOURCE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
-echo "Installing $SKILL_NAME skill for Codex..."
+echo "Installing $SKILL_NAME compatibility skill for Codex ↔ Feishu..."
 
-# Check source
 if [ ! -f "$SOURCE_DIR/SKILL.md" ]; then
   echo "Error: SKILL.md not found in $SOURCE_DIR"
   exit 1
 fi
 
-# Create skills directory
 mkdir -p "$CODEX_SKILLS_DIR"
 
-# Check if already installed
 if [ -e "$TARGET_DIR" ]; then
   if [ -L "$TARGET_DIR" ]; then
     EXISTING=$(readlink "$TARGET_DIR")
-    echo "Already installed as symlink → $EXISTING"
+    echo "Already installed as symlink -> $EXISTING"
     echo "To reinstall, remove it first: rm $TARGET_DIR"
     exit 0
   else
@@ -37,7 +34,7 @@ fi
 
 if [ "${1:-}" = "--link" ]; then
   ln -s "$SOURCE_DIR" "$TARGET_DIR"
-  echo "Symlinked: $TARGET_DIR → $SOURCE_DIR"
+  echo "Symlinked: $TARGET_DIR -> $SOURCE_DIR"
 else
   mkdir -p "$TARGET_DIR"
   tar \
@@ -50,13 +47,11 @@ else
   echo "Copied to: $TARGET_DIR"
 fi
 
-# Ensure dependencies (keep devDependencies so linked/dev installs remain buildable)
 if [ ! -d "$TARGET_DIR/node_modules" ]; then
   echo "Installing dependencies..."
   (cd "$TARGET_DIR" && npm install)
 fi
 
-# Ensure build
 if [ ! -f "$TARGET_DIR/dist/daemon.mjs" ] || [ ! -f "$TARGET_DIR/dist/windows-watchdog.mjs" ]; then
   echo "Building daemon bundle..."
   (cd "$TARGET_DIR" && npm run build)
@@ -64,6 +59,6 @@ fi
 
 echo ""
 echo "Done! Start a new Codex session and use:"
-echo "  claude-to-im setup    — configure IM platform credentials"
-echo "  claude-to-im start    — start the bridge daemon"
-echo "  claude-to-im doctor   — diagnose issues"
+echo "  claude-to-im setup    - configure Codex to Feishu credentials"
+echo "  claude-to-im start    - start the bridge daemon"
+echo "  claude-to-im doctor   - diagnose issues"

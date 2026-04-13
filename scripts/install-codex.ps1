@@ -175,6 +175,6 @@ Ensure-DependenciesAndBuild
 
 Write-Host ""
 Write-Host "Done! Start a new Codex session and use:"
-Write-Host "  claude-to-im setup    - configure IM platform credentials"
+Write-Host "  claude-to-im setup    - configure Codex to Feishu credentials"
 Write-Host "  claude-to-im start    - start the bridge daemon"
 Write-Host "  claude-to-im doctor   - diagnose issues"

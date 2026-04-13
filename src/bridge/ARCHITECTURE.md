@@ -1,4 +1,6 @@
-# Claude-to-IM Architecture
+# Codex ↔ Feishu Runtime Architecture
+
+This document describes the shared runtime behind the maintained `Codex ↔ Feishu` path. Generic adapter hooks remain for compatibility, but Feishu delivery and Codex session correctness should drive product decisions.
 
 ## Module Dependency Graph
 
@@ -64,7 +66,7 @@ All host dependencies are abstracted through interfaces in `host.ts` and accesse
 ### Outbound (LLM → IM)
 
 1. **Bridge Manager** receives response text, dispatches to `deliverResponse()`
-2. Platform-specific rendering: Telegram (HTML chunks), Discord (native markdown), Feishu (cards)
+2. Feishu card rendering is the product path; older renderers remain compatibility code
 3. **Delivery Layer** handles chunking, rate limiting, retry, dedup, audit logging
 4. **Adapter** sends via platform API
 
@@ -84,10 +86,10 @@ All host dependencies are abstracted through interfaces in `host.ts` and accesse
 Bridge Manager state lives on `globalThis` to survive Next.js HMR. The DI context also uses `globalThis`.
 
 ### Deferred Offset Acknowledgement
-Telegram adapter separates `fetchOffset` (API watermark) from `committedOffset` (DB). Offset only advances after `handleMessage()` completes, preventing message loss on crash.
+Compatibility polling adapters separate `fetchOffset` (API watermark) from `committedOffset` (DB). Offset only advances after `handleMessage()` completes, preventing message loss on crash.
 
 ### Streaming Preview Throttling
-Preview drafts use configurable interval (700ms Telegram, 1500ms Discord) + minimum delta chars. Trailing-edge timer ensures the latest text is always sent. On permanent API failure, preview degrades gracefully (stops sending, doesn't retry).
+Preview drafts use configurable intervals and minimum delta chars. Trailing-edge timers ensure the latest text is always sent. On permanent API failure, preview degrades gracefully.
 
 ### Session Lock Chains
 `processWithSessionLock()` uses Promise chaining — not mutual exclusion — so different sessions process concurrently while same-session messages serialize. Lock cleanup happens in `.finally()`.

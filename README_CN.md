@@ -50,6 +50,9 @@ Codex
 
 安装到 Codex 中, 继续使用兼容命令名 `claude-to-im`。
 
+完整的从 0 部署和接通测试清单见
+[`references/zero-deploy-runbook.md`](references/zero-deploy-runbook.md)。
+
 ### 推荐: 用 Codex 安装脚本
 
 ```bash
@@ -147,6 +150,9 @@ start bridge
 打开飞书给机器人发消息, Codex 的回复、工具进度与权限请求都会通过桥接回到飞书。
 
 ## 从零部署冒烟测试
+
+完整的人类 + AI 操作者一站式手册:
+[`references/zero-deploy-runbook.md`](references/zero-deploy-runbook.md)。
 
 用于验证全新安装链路, 不会改动真实的 `~/.codex` skill 目录。
 

@@ -51,6 +51,9 @@ The maintained path is `Codex ↔ Feishu`. Anything else in the repository shoul
 
 Install into Codex and keep using the legacy `claude-to-im` command name for compatibility.
 
+For a full from-zero deployment and connection checklist, use
+[`references/zero-deploy-runbook.md`](references/zero-deploy-runbook.md).
+
 ### Recommended: Codex install script
 
 ```bash
@@ -157,6 +160,9 @@ The daemon runs in the background, so your terminal can close after startup.
 Open Feishu and send a message to your bot. Codex responses, tool progress, and permission prompts are returned through the bridge.
 
 ## Zero-Deploy Smoke Test
+
+Full human + AI operator checklist:
+[`references/zero-deploy-runbook.md`](references/zero-deploy-runbook.md).
 
 Use this when you want to verify a fresh install path without touching your real `~/.codex` skill directory.
 

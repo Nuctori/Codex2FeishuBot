@@ -146,6 +146,30 @@ start bridge
 
 打开飞书给机器人发消息, Codex 的回复、工具进度与权限请求都会通过桥接回到飞书。
 
+## 从零部署冒烟测试
+
+用于验证全新安装链路, 不会改动真实的 `~/.codex` skill 目录。
+
+只测试本地干净安装和构建:
+
+```bash
+npm run smoke:deploy
+```
+
+测试真实飞书凭证连通性, 但不发送消息:
+
+```bash
+npm run smoke:deploy -- --config ~/.claude-to-im/config.env
+```
+
+完整端到端发消息测试:
+
+```bash
+npm run smoke:deploy -- --config ~/.claude-to-im/config.env --chat-id <feishu_chat_id>
+```
+
+冒烟脚本会创建临时干净 HOME, 把当前 checkout 安装到 `.codex/skills/claude-to-im`, 执行 `npm ci --ignore-scripts --prefer-offline` 和构建; 提供配置后会继续跑 `doctor` 以及飞书 token、bot 身份和可选发消息检查。
+
 ## 命令
 
 这些命令都是面向 Codex 的; 兼容命令名仍然是 `claude-to-im`。
@@ -202,6 +226,8 @@ start bridge
 | `src/logger.ts` | 脱敏日志与轮转 |
 | `scripts/daemon.sh` | start / stop / status / logs |
 | `scripts/doctor.sh` | 健康诊断 |
+| `scripts/smoke-deploy.mjs` | 临时干净安装与可选飞书连通性冒烟 |
+| `scripts/feishu-smoke.mjs` | 飞书 token、bot 身份与可选发消息检查 |
 
 ## 故障排查
 

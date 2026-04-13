@@ -7,6 +7,8 @@
     "build": "node scripts/build.js",
     "typecheck": "tsc --noEmit",
     "dev": "tsx src/main.ts",
+    "smoke:deploy": "node scripts/smoke-deploy.mjs",
+    "smoke:feishu": "node scripts/feishu-smoke.mjs",
     "compat:weixin-login": "node --import tsx src/weixin-login.ts",
     "test": "node scripts/test.js"
   },

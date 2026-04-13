@@ -156,6 +156,30 @@ The daemon runs in the background, so your terminal can close after startup.
 
 Open Feishu and send a message to your bot. Codex responses, tool progress, and permission prompts are returned through the bridge.
 
+## Zero-Deploy Smoke Test
+
+Use this when you want to verify a fresh install path without touching your real `~/.codex` skill directory.
+
+Local clean install + build only:
+
+```bash
+npm run smoke:deploy
+```
+
+Real Feishu credential connectivity, without sending a message:
+
+```bash
+npm run smoke:deploy -- --config ~/.claude-to-im/config.env
+```
+
+Full end-to-end send test:
+
+```bash
+npm run smoke:deploy -- --config ~/.claude-to-im/config.env --chat-id <feishu_chat_id>
+```
+
+The smoke script creates a temporary clean HOME, installs this checkout into `.codex/skills/claude-to-im`, runs `npm ci --ignore-scripts --prefer-offline`, builds the daemon, then optionally runs `doctor` plus a Feishu token / bot / message-send check.
+
 ## Commands
 
 All commands are intended for Codex. The legacy command name is still `claude-to-im`.
@@ -212,6 +236,8 @@ If callbacks or permission cards fail after an upgrade, re-check scopes, callbac
 | `src/logger.ts` | Redacted rotating logs |
 | `scripts/daemon.sh` | Start / stop / status / logs |
 | `scripts/doctor.sh` | Health diagnostics |
+| `scripts/smoke-deploy.mjs` | Clean temporary install and optional Feishu connectivity smoke |
+| `scripts/feishu-smoke.mjs` | Feishu token, bot identity, and optional message-send check |
 
 ## Troubleshooting
 

@@ -4,6 +4,7 @@
   "description": "Codex ↔ Feishu bridge skill",
   "type": "module",
   "scripts": {
+    "bootstrap": "node scripts/bootstrap.mjs",
     "build": "node scripts/build.js",
     "typecheck": "tsc --noEmit",
     "dev": "tsx src/main.ts",

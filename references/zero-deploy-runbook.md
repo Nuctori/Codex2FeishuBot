@@ -48,8 +48,8 @@ $env:HTTP_PROXY="http://127.0.0.1:7890"
 ### Windows PowerShell
 
 ```powershell
-git clone https://github.com/op7418/codex-feishu-bridge.git $env:USERPROFILE\code\codex-feishu-bridge
-Set-Location $env:USERPROFILE\code\codex-feishu-bridge
+git clone https://github.com/Nuctori/Codex2FeishuBot.git $env:USERPROFILE\code\Codex2FeishuBot
+Set-Location $env:USERPROFILE\code\Codex2FeishuBot
 npm ci
 npm run build
 ```
@@ -57,8 +57,8 @@ npm run build
 ### macOS / Linux / Git Bash
 
 ```bash
-git clone https://github.com/op7418/codex-feishu-bridge.git ~/code/codex-feishu-bridge
-cd ~/code/codex-feishu-bridge
+git clone https://github.com/Nuctori/Codex2FeishuBot.git ~/code/Codex2FeishuBot
+cd ~/code/Codex2FeishuBot
 npm ci
 npm run build
 ```

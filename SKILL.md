@@ -26,7 +26,7 @@ User data is stored at the legacy data path `~/.claude-to-im/`.
 Treat `Codex ↔ Feishu` as the maintained product path. Other adapters/providers may remain in-tree, but they are compatibility or future-facing layers unless the user explicitly asks to work on them.
 
 The installed skill is usually under `~/.codex/skills/claude-to-im`.
-During local development it may instead be a checkout such as `~/code/codex-feishu-bridge`.
+During local development it may instead be a checkout such as `~/code/Codex2FeishuBot`.
 
 ## Command parsing
 

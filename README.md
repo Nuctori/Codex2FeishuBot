@@ -1,12 +1,12 @@
-# Codex ↔ Feishu
+# Codex to Feishu
 
 Primary product focus: continue live Codex coding sessions from Feishu.
 
 [中文文档](README_CN.md)
 
-> **Compatibility note:** the installed skill name, command, and legacy data path `~/.claude-to-im/` remain for now, so existing Codex workflows keep working while the product branding moves toward `Codex ↔ Feishu`.
+> Compatibility note: the installed skill name, command, and legacy data path `~/.claude-to-im/` remain unchanged for now, so existing Codex workflows keep working while the product branding moves toward `Codex to Feishu`.
 >
-> **Architecture note:** the repository still contains broader IM / provider abstractions, but those are compatibility or future-facing layers rather than the current product promise.
+> Architecture note: broader IM and provider abstractions still exist in-tree, but they are compatibility or future-facing layers rather than the current product promise.
 
 ---
 
@@ -23,61 +23,129 @@ Codex
   -> reads and writes your workspace
 ```
 
-The maintained path is `Codex ↔ Feishu`. Anything else in the repository should be treated as reserved implementation space unless explicitly requested.
+The maintained path is `Codex to Feishu`. Anything else in the repository should be treated as reserved implementation space unless explicitly requested.
 
 ## Product Scope
 
-- **Maintained now:** Codex session continuation from Feishu
-- **Maintained now:** project/session browsing, session binding, permission cards, streaming/status updates
-- **Compatibility only:** legacy install path `claude-to-im`
-- **Compatibility only:** generic adapter/provider abstractions still in-tree
-- **Not the current product promise:** general-purpose multi-IM bridge positioning
+- Maintained now: Codex session continuation from Feishu
+- Maintained now: project/session browsing, session binding, permission cards, streaming/status updates
+- Compatibility only: legacy install path `claude-to-im`
+- Compatibility only: generic adapter/provider abstractions still in-tree
+- Not the current product promise: general-purpose multi-IM bridge positioning
 
 ## Features
 
-- **Feishu-first session control** — project list, session list, open-session dock, and in-card session switching
-- **Codex-native workflow** — forwards Feishu messages into live Codex sessions instead of creating a separate bot-only memory silo
-- **Permission flow for mobile** — card approvals plus quick `1 / 2 / 3` reply fallback
-- **Persistent bindings** — session bindings and mirrors survive bridge restarts
-- **Windows-friendly operations** — PowerShell install, watchdog startup, dual-log diagnostics, service helpers
+- Feishu-first session control: project list, session list, open-session dock, and in-card session switching
+- Codex-native workflow: forwards Feishu messages into live Codex sessions instead of creating a separate bot-only memory silo
+- Permission flow for mobile: card approvals plus quick `1 / 2 / 3` reply fallback
+- Persistent bindings: session bindings and mirrors survive bridge restarts
+- Windows-friendly operations: PowerShell install, watchdog startup, dual-log diagnostics, service helpers
 
 ## Prerequisites
 
-- **Node.js >= 20**
-- **Codex CLI** — install with `npm install -g @openai/codex`, then authenticate with `codex auth login` or `OPENAI_API_KEY`
-- **Feishu app credentials** — App ID + App Secret for a self-built app with bot capability enabled
+- Node.js >= 20
+- Codex CLI: install with `npm install -g @openai/codex`, then authenticate with `codex auth login` or `OPENAI_API_KEY`
+- Feishu app credentials: App ID + App Secret for a self-built app with bot capability enabled
 
-## Installation
+## Quickest Start
 
-Install into Codex and keep using the legacy `claude-to-im` command name for compatibility.
-
-For a full from-zero deployment and connection checklist, use
-[`references/zero-deploy-runbook.md`](references/zero-deploy-runbook.md).
-
-### Recommended: Codex install script
+Clone this repository:
 
 ```bash
-git clone https://github.com/op7418/codex-feishu-bridge.git ~/code/codex-feishu-bridge
-bash ~/code/codex-feishu-bridge/scripts/install-codex.sh
+git clone https://github.com/Nuctori/Codex2FeishuBot.git ~/code/Codex2FeishuBot
+cd ~/code/Codex2FeishuBot
 ```
 
 Windows PowerShell:
 
 ```powershell
-git clone https://github.com/op7418/codex-feishu-bridge.git $env:USERPROFILE\code\codex-feishu-bridge
-powershell -ExecutionPolicy Bypass -File $env:USERPROFILE\code\codex-feishu-bridge\scripts\install-codex.ps1
+git clone https://github.com/Nuctori/Codex2FeishuBot.git $env:USERPROFILE\code\Codex2FeishuBot
+Set-Location $env:USERPROFILE\code\Codex2FeishuBot
 ```
 
-For local development with a live checkout:
+Run the local bootstrap:
 
 ```bash
-bash ~/code/codex-feishu-bridge/scripts/install-codex.sh --link
+npm run bootstrap
 ```
 
-Windows PowerShell development install:
+Windows PowerShell:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File $env:USERPROFILE\code\codex-feishu-bridge\scripts\install-codex.ps1 -Link
+npm run bootstrap
+```
+
+That command installs dependencies and builds the daemon. To also install the skill into Codex:
+
+```bash
+npm run bootstrap -- --install
+```
+
+Windows PowerShell live-link install:
+
+```powershell
+npm run bootstrap -- --install --link
+```
+
+## Automation Boundary
+
+This repository is now much friendlier to other AI agents, but it still cannot do a perfect zero-human setup because Feishu platform operations remain external:
+
+- A human must create the Feishu app and obtain `App ID` / `App Secret`
+- A human must approve scopes, bot capability, callbacks, and version publish
+- A human usually needs to provide a real `chat_id` before an end-to-end send test can run
+
+Once the repository checkout and credentials exist, an AI agent can automate local install, build, doctor, smoke tests, and Codex skill installation.
+
+## Installation
+
+Install into Codex and keep using the legacy `claude-to-im` command name for compatibility.
+
+For a full from-zero deployment and connection checklist, use `references/zero-deploy-runbook.md`.
+
+### Recommended: bootstrap + install
+
+```bash
+npm run bootstrap -- --install
+```
+
+Windows PowerShell:
+
+```powershell
+npm run bootstrap -- --install
+```
+
+### Development mode: live link install
+
+```bash
+npm run bootstrap -- --install --link
+```
+
+Windows PowerShell:
+
+```powershell
+npm run bootstrap -- --install --link
+```
+
+### Alternative: install script directly
+
+```bash
+bash ./scripts/install-codex.sh
+```
+
+Windows PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install-codex.ps1
+```
+
+### Alternative: clone directly into Codex skills
+
+```bash
+git clone https://github.com/Nuctori/Codex2FeishuBot.git ~/.codex/skills/claude-to-im
+cd ~/.codex/skills/claude-to-im
+npm install
+npm run build
 ```
 
 The install script places the skill under `~/.codex/skills/claude-to-im`, installs dependencies, and builds the daemon.
@@ -86,15 +154,6 @@ After installation, tell Codex:
 
 ```text
 claude-to-im setup
-```
-
-### Alternative: clone directly into Codex skills
-
-```bash
-git clone https://github.com/op7418/codex-feishu-bridge.git ~/.codex/skills/claude-to-im
-cd ~/.codex/skills/claude-to-im
-npm install
-npm run build
 ```
 
 ## Verify Installation
@@ -107,14 +166,14 @@ If you installed with the Codex install script in copy mode:
 
 ```bash
 rm -rf ~/.codex/skills/claude-to-im
-bash ~/code/codex-feishu-bridge/scripts/install-codex.sh
+npm run bootstrap -- --install
 ```
 
 Windows PowerShell:
 
 ```powershell
 Remove-Item -Recurse -Force $env:USERPROFILE\.codex\skills\claude-to-im
-powershell -ExecutionPolicy Bypass -File $env:USERPROFILE\code\codex-feishu-bridge\scripts\install-codex.ps1
+npm run bootstrap -- --install
 ```
 
 If you installed with `--link` or cloned directly into the Codex skills directory:
@@ -133,7 +192,7 @@ claude-to-im doctor
 start bridge
 ```
 
-## Quick Start
+## Quick Start in Codex
 
 ### 1. Run setup
 
@@ -143,9 +202,9 @@ claude-to-im setup
 
 The setup flow for the maintained product path covers:
 
-1. **Feishu credentials** — App ID, App Secret, domain, permissions, bot capability, callbacks
-2. **Codex defaults** — workspace, model, runtime mode
-3. **Validation** — configuration and connectivity checks before launch
+1. Feishu credentials: App ID, App Secret, domain, permissions, bot capability, callbacks
+2. Codex defaults: workspace, model, runtime mode
+3. Validation: configuration and connectivity checks before launch
 
 ### 2. Start the bridge
 
@@ -161,8 +220,7 @@ Open Feishu and send a message to your bot. Codex responses, tool progress, and 
 
 ## Zero-Deploy Smoke Test
 
-Full human + AI operator checklist:
-[`references/zero-deploy-runbook.md`](references/zero-deploy-runbook.md).
+Full human + AI operator checklist: `references/zero-deploy-runbook.md`.
 
 Use this when you want to verify a fresh install path without touching your real `~/.codex` skill directory.
 
@@ -184,7 +242,7 @@ Full end-to-end send test:
 npm run smoke:deploy -- --config ~/.claude-to-im/config.env --chat-id <feishu_chat_id>
 ```
 
-The smoke script creates a temporary clean HOME, installs this checkout into `.codex/skills/claude-to-im`, runs `npm ci --ignore-scripts --prefer-offline`, builds the daemon, then optionally runs `doctor` plus a Feishu token / bot / message-send check.
+The smoke script creates a temporary clean HOME, installs this checkout into `.codex/skills/claude-to-im`, runs `npm ci --ignore-scripts --prefer-offline`, builds the daemon, then optionally runs `doctor` plus a Feishu token, bot, and message-send check.
 
 ## Commands
 
@@ -192,7 +250,7 @@ All commands are intended for Codex. The legacy command name is still `claude-to
 
 | Command or phrase | Description |
 |---|---|
-| `claude-to-im setup` / `配置桥接` | Configure the Codex ↔ Feishu bridge |
+| `claude-to-im setup` / `配置桥接` | Configure the Codex to Feishu bridge |
 | `start bridge` / `启动桥接` | Start the background daemon |
 | `stop bridge` / `停止桥接` | Stop the daemon |
 | `bridge status` / `查看桥接状态` | Show daemon status |
@@ -205,10 +263,10 @@ All commands are intended for Codex. The legacy command name is still `claude-to
 The `setup` flow provides inline guidance. At a high level you need:
 
 1. Go to [Feishu Open Platform](https://open.feishu.cn/app) or [Lark Open Platform](https://open.larksuite.com/app)
-2. Create a custom app and copy **App ID** + **App Secret**
+2. Create a custom app and copy App ID + App Secret
 3. Batch-add the permissions required by this bridge
-4. Enable the **Bot** capability
-5. Configure **long connection** events and card callbacks
+4. Enable the Bot capability
+5. Configure long-connection events and card callbacks
 6. Publish the app version and complete admin approval
 
 If callbacks or permission cards fail after an upgrade, re-check scopes, callback registrations, and publish status first.
@@ -216,18 +274,18 @@ If callbacks or permission cards fail after an upgrade, re-check scopes, callbac
 ## Legacy Runtime Data Path
 
 ```text
-~/.claude-to-im/   # legacy data path retained for compatibility
-├── config.env
-├── data/
-│   ├── sessions.json
-│   ├── bindings.json
-│   ├── permissions.json
-│   └── messages/
-├── logs/
-│   └── bridge.log
-└── runtime/
-    ├── bridge.pid
-    └── status.json
+~/.claude-to-im/
+├─ config.env
+├─ data/
+│  ├─ sessions.json
+│  ├─ bindings.json
+│  ├─ permissions.json
+│  └─ messages/
+├─ logs/
+│  └─ bridge.log
+└─ runtime/
+   ├─ bridge.pid
+   └─ status.json
 ```
 
 ## Key Components
@@ -238,8 +296,9 @@ If callbacks or permission cards fail after an upgrade, re-check scopes, callbac
 | `src/config.ts` | Loads and persists bridge config |
 | `src/store.ts` | JSON-backed bridge state storage |
 | `src/codex-provider.ts` | Codex runtime integration |
-| `src/permission-gateway.ts` | Permission request / approval bridge |
+| `src/permission-gateway.ts` | Permission request and approval bridge |
 | `src/logger.ts` | Redacted rotating logs |
+| `scripts/bootstrap.mjs` | AI-friendly one-command local bootstrap |
 | `scripts/daemon.sh` | Start / stop / status / logs |
 | `scripts/doctor.sh` | Health diagnostics |
 | `scripts/smoke-deploy.mjs` | Clean temporary install and optional Feishu connectivity smoke |

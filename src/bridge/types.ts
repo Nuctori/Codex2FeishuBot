@@ -98,6 +98,8 @@ export interface ChannelBinding {
   codepilotSessionId: string;
   /** SDK session ID for resume (cached from last conversation) */
   sdkSessionId: string;
+  /** Codex home that owns the SDK session ID, used for resume consistency. */
+  codexHome?: string;
   /** Working directory for this binding */
   workingDirectory: string;
   /** Model override for this binding */

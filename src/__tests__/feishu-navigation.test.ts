@@ -1260,6 +1260,7 @@ describe('Feishu navigation cards', () => {
     assert.ok(rebound);
     assert.notEqual(rebound!.codepilotSessionId, '33333333-3333-4333-8333-333333333333');
     assert.equal(rebound!.sdkSessionId, '33333333-3333-4333-8333-333333333333');
+    assert.equal(rebound!.codexHome, TEST_CODEX_HOME);
     assert.equal(rebound!.workingDirectory, 'D:\\hardware\\mi-band');
 
     const mirrored = store.getSession(rebound!.codepilotSessionId) as any;
@@ -1316,6 +1317,7 @@ describe('Feishu navigation cards', () => {
     assert.ok(rebound);
     assert.notEqual(rebound!.codepilotSessionId, '019d56b8-6a5a-79d1-a1a2-0bacb6f0a304');
     assert.equal(rebound!.sdkSessionId, '019d56b8-6a5a-79d1-a1a2-0bacb6f0a304');
+    assert.equal(rebound!.codexHome, TEST_CODEX_HOME);
     assert.equal(rebound!.workingDirectory, 'D:\\lua\\fireBookStore-backend\\firebookstore-dotnet');
 
     const mirrored = store.getSession(rebound!.codepilotSessionId) as any;

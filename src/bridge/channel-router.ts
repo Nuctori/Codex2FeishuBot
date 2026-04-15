@@ -60,6 +60,7 @@ export function createBinding(
     bindingKey: getAddressBindingKey(address),
     codepilotSessionId: session.id,
     sdkSessionId: '',
+    codexHome: '',
     workingDirectory: defaultCwd,
     model: defaultModel,
     mode: 'code',
@@ -86,6 +87,7 @@ export function bindToSession(
     bindingKey: getAddressBindingKey(address),
     codepilotSessionId,
     sdkSessionId,
+    codexHome: '',
     workingDirectory: session.working_directory,
     model: session.model,
   });

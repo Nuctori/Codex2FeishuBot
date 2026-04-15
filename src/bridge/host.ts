@@ -141,6 +141,7 @@ export interface UpsertChannelBindingInput {
   bindingKey?: string;
   codepilotSessionId: string;
   sdkSessionId?: string;
+  codexHome?: string;
   workingDirectory: string;
   model: string;
   mode?: string;
@@ -223,6 +224,7 @@ export interface StreamChatParams {
   prompt: string;
   sessionId: string;
   sdkSessionId?: string;
+  codexHome?: string;
   model?: string;
   systemPrompt?: string;
   workingDirectory?: string;

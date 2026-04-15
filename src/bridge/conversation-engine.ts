@@ -194,6 +194,7 @@ export async function processMessage(
       prompt: text,
       sessionId,
       sdkSessionId: binding.sdkSessionId || undefined,
+      codexHome: binding.codexHome || undefined,
       model: effectiveModel,
       systemPrompt: session?.system_prompt || undefined,
       workingDirectory: binding.workingDirectory || session?.working_directory || undefined,

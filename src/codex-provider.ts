@@ -179,12 +179,14 @@ function ensureIsolatedCodexHome(): string {
   return codexHome;
 }
 
-function buildCodexProcessEnv(apiKey?: string): Record<string, string> {
+function buildCodexProcessEnv(apiKey?: string, codexHomeOverride?: string): Record<string, string> {
   const env = Object.fromEntries(
     Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
   );
 
-  if (shouldIsolateCodexHome()) {
+  if (codexHomeOverride?.trim()) {
+    env.CODEX_HOME = codexHomeOverride.trim();
+  } else if (shouldIsolateCodexHome()) {
     env.CODEX_HOME = ensureIsolatedCodexHome();
   } else {
     env.CODEX_HOME = resolveEffectiveCodexHomePath();
@@ -288,10 +290,11 @@ function parseTomlString(line: string): string | undefined {
   return match?.[1];
 }
 
-function loadCodexConfigDefaults(): CodexConfigDefaults {
-  const configHome = shouldIsolateCodexHome()
-    ? ensureIsolatedCodexHome()
-    : resolveEffectiveCodexHomePath();
+function loadCodexConfigDefaults(codexHomeOverride?: string): CodexConfigDefaults {
+  const configHome = codexHomeOverride?.trim()
+    || (shouldIsolateCodexHome()
+      ? ensureIsolatedCodexHome()
+      : resolveEffectiveCodexHomePath());
   const configPath = path.join(configHome, 'config.toml');
   let content: string;
 
@@ -379,7 +382,7 @@ export class CodexProvider implements LLMProvider {
 
   constructor(private pendingPerms: PendingPermissions) {}
 
-  private buildCodexOptions(configDefaults: CodexConfigDefaults): Record<string, unknown> {
+  private buildCodexOptions(configDefaults: CodexConfigDefaults, codexHomeOverride?: string): Record<string, unknown> {
     const apiKey = process.env.CTI_CODEX_API_KEY
       || process.env.CODEX_API_KEY
       || process.env.OPENAI_API_KEY
@@ -412,15 +415,15 @@ export class CodexProvider implements LLMProvider {
       ...(baseUrl ? { baseUrl } : {}),
       ...(codexPathOverride ? { codexPathOverride } : {}),
       ...(Object.keys(config).length > 0 ? { config } : {}),
-      env: buildCodexProcessEnv(apiKey),
+      env: buildCodexProcessEnv(apiKey, codexHomeOverride),
     };
   }
 
   /**
    * Lazily load the Codex SDK. Throws a clear error if not installed.
    */
-  private async ensureSDK(): Promise<{ sdk: CodexModule; codex: CodexInstance }> {
-    if (this.sdk && this.codex) {
+  private async ensureSDK(codexHomeOverride?: string): Promise<{ sdk: CodexModule; codex: CodexInstance }> {
+    if (this.sdk && this.codex && !codexHomeOverride) {
       return { sdk: this.sdk, codex: this.codex };
     }
 
@@ -433,18 +436,21 @@ export class CodexProvider implements LLMProvider {
       );
     }
 
-    const configDefaults = loadCodexConfigDefaults();
+    const configDefaults = loadCodexConfigDefaults(codexHomeOverride);
 
     const CodexClass = this.sdk.Codex;
-    const codexOptions = this.buildCodexOptions(configDefaults);
+    const codexOptions = this.buildCodexOptions(configDefaults, codexHomeOverride);
     if (codexOptions.codexPathOverride) {
       console.log(`[codex-provider] Using global Codex executable: ${String(codexOptions.codexPathOverride)}`);
     } else {
       console.warn('[codex-provider] Global Codex executable not found; falling back to SDK-managed binary');
     }
-    this.codex = new CodexClass(codexOptions);
+    const codex = this.codex && !codexHomeOverride ? this.codex : new CodexClass(codexOptions);
+    if (!codexHomeOverride) {
+      this.codex = codex;
+    }
 
-    return { sdk: this.sdk, codex: this.codex };
+    return { sdk: this.sdk, codex };
   }
 
   streamChat(params: StreamChatParams): ReadableStream<string> {
@@ -457,7 +463,7 @@ export class CodexProvider implements LLMProvider {
           const streamState = createStreamItemState();
           let clearWatchdogs = () => {};
           try {
-            const { codex } = await self.ensureSDK();
+            const { codex } = await self.ensureSDK(params.codexHome);
 
             // Resolve or create thread
             const inMemoryThreadId = self.threadIds.get(params.sessionId);

@@ -559,6 +559,35 @@ describe('CodexProvider', () => {
     }
   });
 
+  it('uses the bound session codex home override when provided', async () => {
+    const oldIsolate = process.env.CTI_CODEX_ISOLATE_HOME;
+    const oldConfiguredHome = process.env.CTI_CODEX_HOME;
+    const oldCodexHome = process.env.CODEX_HOME;
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const configuredHome = join(tmpdir(), `cti-configured-codex-home-${Date.now()}`);
+    const boundHome = join(tmpdir(), `cti-bound-codex-home-${Date.now()}`);
+
+    process.env.CTI_CODEX_ISOLATE_HOME = 'true';
+    process.env.CTI_CODEX_HOME = configuredHome;
+    delete process.env.CODEX_HOME;
+
+    try {
+      const { CodexProvider } = await import('../codex-provider.js');
+      const { PendingPermissions } = await import('../permission-gateway.js');
+      const provider = new CodexProvider(new PendingPermissions());
+      const capturedOptions = (provider as any).buildCodexOptions({}, boundHome);
+
+      assert.ok(capturedOptions, 'Codex constructor options should be captured');
+      const env = capturedOptions!.env as Record<string, string>;
+      assert.equal(env.CODEX_HOME, boundHome);
+    } finally {
+      restoreEnv('CTI_CODEX_ISOLATE_HOME', oldIsolate);
+      restoreEnv('CTI_CODEX_HOME', oldConfiguredHome);
+      restoreEnv('CODEX_HOME', oldCodexHome);
+    }
+  });
+
   it('aliases the resolved API key to OPENAI_API_KEY when only a provider-specific env var is set', async () => {
     const oldLocal = process.env.LOCAL_OPENAI_API_KEY;
     const oldOpenAi = process.env.OPENAI_API_KEY;

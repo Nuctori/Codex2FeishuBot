@@ -929,6 +929,7 @@ function syncBindingToCurrentSession(binding: ChannelBinding): ChannelBinding {
   const nextWorkingDirectory = normalizeProjectPath(currentSession.working_directory || binding.workingDirectory);
   const nextModel = currentSession.model || binding.model || '';
   const nextSdkSessionId = getStoredSdkSessionId(currentSession) || binding.sdkSessionId || '';
+  const nextCodexHome = currentSession.codex_home?.trim() || binding.codexHome || '';
   const updates: Partial<ChannelBinding> = {};
 
   if (nextWorkingDirectory && normalizeProjectPath(binding.workingDirectory) !== nextWorkingDirectory) {
@@ -939,6 +940,9 @@ function syncBindingToCurrentSession(binding: ChannelBinding): ChannelBinding {
   }
   if (nextSdkSessionId !== (binding.sdkSessionId || '')) {
     updates.sdkSessionId = nextSdkSessionId;
+  }
+  if (nextCodexHome !== (binding.codexHome || '')) {
+    updates.codexHome = nextCodexHome;
   }
 
   if (Object.keys(updates).length === 0) {
@@ -2846,7 +2850,25 @@ function ensureBindableSession(sessionId: string): NamedBridgeSession | null {
   ) as NamedBridgeSession;
   store.updateSessionName?.(created.id, name);
   store.updateSdkSessionId?.(created.id, sessionId);
-  return (store.getSession(created.id) as NamedBridgeSession | null) ?? { ...created, sdk_session_id: sessionId };
+  const stored = store.getSession(created.id) as NamedBridgeSession | null;
+  if (stored) {
+    return { ...stored, sdk_session_id: sessionId, codex_home: discovered.codex_home };
+  }
+  return { ...created, sdk_session_id: sessionId, codex_home: discovered.codex_home };
+}
+
+function bindAddressToSession(address: ChannelAddress, session: NamedBridgeSession): ChannelBinding {
+  const store = getSessionListingStore();
+  return store.upsertChannelBinding({
+    channelType: address.channelType,
+    chatId: address.chatId,
+    bindingKey: getAddressBindingKey(address),
+    codepilotSessionId: session.id,
+    sdkSessionId: getStoredSdkSessionId(session) || '',
+    codexHome: session.codex_home?.trim() || '',
+    workingDirectory: session.working_directory,
+    model: session.model,
+  });
 }
 
 async function handleNavigationCallback(
@@ -3038,7 +3060,7 @@ async function handleNavigationCallback(
     }
     const bindableSession = ensureBindableSession(sessionId);
     const boundSessionId = bindableSession?.id || sessionId;
-    const nextBinding = bindableSession ? router.bindToSession(msg.address, boundSessionId) : null;
+    const nextBinding = bindableSession ? bindAddressToSession(msg.address, bindableSession) : null;
     if (!nextBinding) {
       await deliver(adapter, {
         address: msg.address,
@@ -3081,7 +3103,7 @@ async function handleNavigationCallback(
     }
     const bindableSession = ensureBindableSession(sessionId);
     const boundSessionId = bindableSession?.id || sessionId;
-    const nextBinding = bindableSession ? router.bindToSession(msg.address, boundSessionId) : null;
+    const nextBinding = bindableSession ? bindAddressToSession(msg.address, bindableSession) : null;
     if (!nextBinding) {
       await deliver(adapter, {
         address: msg.address,
@@ -4021,7 +4043,7 @@ async function handleCommand(
       }
       const bindableSession = ensureBindableSession(args);
       const boundSessionId = bindableSession?.id || args;
-      const binding = bindableSession ? router.bindToSession(msg.address, boundSessionId) : null;
+      const binding = bindableSession ? bindAddressToSession(msg.address, bindableSession) : null;
       if (binding) {
         const dockBinding = markDockSessionSeen(addSessionToDock(binding, boundSessionId, true), boundSessionId);
         if (await sendStatusCard(adapter, msg, dockBinding)) {

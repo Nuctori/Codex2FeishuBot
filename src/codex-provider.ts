@@ -99,8 +99,46 @@ function formatTimeoutMs(timeoutMs: number): string {
   return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
 }
 
-function resolveSandboxMode(): string {
-  return process.env.CTI_CODEX_SANDBOX_MODE || 'workspace-write';
+function normalizeWindowsDriveRoot(candidate: string | undefined): string | undefined {
+  const trimmed = candidate?.trim();
+  if (!trimmed) return undefined;
+  const match = trimmed.match(/^([a-zA-Z]:)/);
+  return match ? match[1].toUpperCase() : undefined;
+}
+
+function isWindowsNonSystemDriveWorkspace(
+  workingDirectory: string | undefined,
+  platform = process.platform,
+  systemDrive = process.env.SystemDrive || 'C:',
+): boolean {
+  if (platform !== 'win32') return false;
+  const workspaceDrive = normalizeWindowsDriveRoot(path.resolve(workingDirectory || ''));
+  const normalizedSystemDrive = normalizeWindowsDriveRoot(systemDrive);
+  if (!workspaceDrive || !normalizedSystemDrive) return false;
+  return workspaceDrive !== normalizedSystemDrive;
+}
+
+export function resolveSandboxMode(
+  workingDirectory?: string,
+  platform = process.platform,
+  systemDrive = process.env.SystemDrive || 'C:',
+): string {
+  const explicit = process.env.CTI_CODEX_SANDBOX_MODE?.trim();
+  if (explicit) {
+    return explicit;
+  }
+
+  // On Windows, Codex's workspace-write sandbox may try to grant ACLs on the
+  // drive root (for example `D:\`) before running a command. Non-system data
+  // drives commonly reject that ACL mutation with access denied, which makes
+  // even read-only shell commands fail before execution. For bridge sessions on
+  // those drives, prefer danger-full-access unless the operator explicitly set
+  // CTI_CODEX_SANDBOX_MODE.
+  if (isWindowsNonSystemDriveWorkspace(workingDirectory, platform, systemDrive)) {
+    return 'danger-full-access';
+  }
+
+  return 'workspace-write';
 }
 
 /**
@@ -472,11 +510,23 @@ export class CodexProvider implements LLMProvider {
             const approvalPolicy = toApprovalPolicy(params.permissionMode);
             const passModel = shouldPassModelToCodex();
 
+            const sandboxMode = resolveSandboxMode(params.workingDirectory);
+            if (
+              !process.env.CTI_CODEX_SANDBOX_MODE
+              && sandboxMode === 'danger-full-access'
+              && params.workingDirectory
+            ) {
+              console.warn(
+                `[codex-provider] Windows non-system drive workspace detected; `
+                + `falling back to danger-full-access for ${params.workingDirectory}`,
+              );
+            }
+
             const threadOptions: Record<string, unknown> = {
               ...(passModel && params.model ? { model: params.model } : {}),
               ...(params.workingDirectory ? { workingDirectory: params.workingDirectory } : {}),
               ...(shouldSkipGitRepoCheck() ? { skipGitRepoCheck: true } : {}),
-              sandboxMode: resolveSandboxMode(),
+              sandboxMode,
               approvalPolicy,
             };
 

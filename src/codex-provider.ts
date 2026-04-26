@@ -62,6 +62,13 @@ interface CodexConfigOverrides {
 const CODEX_HOME_SEED_FILES = ['config.toml', 'auth.json', 'cap_sid'];
 const DEFAULT_CODEX_FIRST_EVENT_TIMEOUT_MS = 45_000;
 const DEFAULT_CODEX_IDLE_TIMEOUT_MS = 5 * 60_000;
+const DEFAULT_CODEX_LONG_TASK_IDLE_TIMEOUT_MS = 30 * 60_000;
+const LONG_RUNNING_FUNCTION_NAMES = new Set([
+  'spawn_agent',
+  'wait_agent',
+  'send_input',
+  'resume_agent',
+]);
 
 type StreamItemState = {
   announcedToolUses: Set<string>;
@@ -88,6 +95,10 @@ function getCodexFirstEventTimeoutMs(): number {
 
 function getCodexIdleTimeoutMs(): number {
   return parsePositiveIntEnv('CTI_CODEX_IDLE_TIMEOUT_MS', DEFAULT_CODEX_IDLE_TIMEOUT_MS);
+}
+
+function getCodexLongTaskIdleTimeoutMs(): number {
+  return parsePositiveIntEnv('CTI_CODEX_LONG_TASK_IDLE_TIMEOUT_MS', DEFAULT_CODEX_LONG_TASK_IDLE_TIMEOUT_MS);
 }
 
 function formatTimeoutMs(timeoutMs: number): string {
@@ -260,6 +271,43 @@ function isSdkManagedCandidate(candidate: string): boolean {
 function isWindowsStoreAlias(candidate: string): boolean {
   const normalized = candidate.toLowerCase().replaceAll('/', path.sep);
   return normalized.includes(`${path.sep}windowsapps${path.sep}`);
+}
+
+function parseStructuredToolInput(input: unknown): unknown {
+  if (typeof input !== 'string') return input;
+  const trimmed = input.trim();
+  if (!trimmed) return {};
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return { raw: trimmed };
+  }
+}
+
+function getToolItemId(item: Record<string, unknown>): string {
+  return (item.id as string) || (item.call_id as string) || `tool-${Date.now()}`;
+}
+
+function getToolItemName(item: Record<string, unknown>): string {
+  return (item.name as string) || (item.tool as string) || '';
+}
+
+function isLongRunningFunctionItem(item: Record<string, unknown>): boolean {
+  const itemType = item.type as string | undefined;
+  if (itemType !== 'function_call' && itemType !== 'custom_tool_call') {
+    return false;
+  }
+  const name = getToolItemName(item).trim();
+  return LONG_RUNNING_FUNCTION_NAMES.has(name);
+}
+
+function describeLongRunningFunctionItem(item: Record<string, unknown>): string | null {
+  const name = getToolItemName(item).trim();
+  if (!name) return null;
+  if (name === 'wait_agent') return 'waiting on subagents';
+  if (name === 'spawn_agent') return 'spawning subagents';
+  if (name === 'send_input' || name === 'resume_agent') return 'coordinating subagents';
+  return `running ${name}`;
 }
 
 function isSpawnableCodexCandidate(candidate: string): boolean {
@@ -551,9 +599,11 @@ export class CodexProvider implements LLMProvider {
 
             const firstEventTimeoutMs = getCodexFirstEventTimeoutMs();
             const idleTimeoutMs = getCodexIdleTimeoutMs();
+            const longTaskIdleTimeoutMs = Math.max(idleTimeoutMs, getCodexLongTaskIdleTimeoutMs());
             let firstEventTimer: ReturnType<typeof setTimeout> | null = null;
             let idleTimer: ReturnType<typeof setTimeout> | null = null;
             let timeoutMessage: string | null = null;
+            let longRunningToolHint: string | null = null;
 
             clearWatchdogs = () => {
               if (firstEventTimer) {
@@ -583,11 +633,13 @@ export class CodexProvider implements LLMProvider {
             };
 
             const armIdleWatchdog = () => {
-              if (idleTimeoutMs <= 0) return;
+              const effectiveIdleTimeoutMs = longRunningToolHint ? longTaskIdleTimeoutMs : idleTimeoutMs;
+              if (effectiveIdleTimeoutMs <= 0) return;
               if (idleTimer) clearTimeout(idleTimer);
               idleTimer = setTimeout(() => {
-                abortForTimeout(`Codex stream was idle for ${formatTimeoutMs(idleTimeoutMs)}.`);
-              }, idleTimeoutMs);
+                const suffix = longRunningToolHint ? ` while ${longRunningToolHint}` : '';
+                abortForTimeout(`Codex stream was idle for ${formatTimeoutMs(effectiveIdleTimeoutMs)}${suffix}.`);
+              }, effectiveIdleTimeoutMs);
             };
 
             const markEventProgress = () => {
@@ -658,18 +710,30 @@ export class CodexProvider implements LLMProvider {
 
                     case 'item.started': {
                       const item = event.item as Record<string, unknown>;
+                      if (!longRunningToolHint && isLongRunningFunctionItem(item)) {
+                        longRunningToolHint = describeLongRunningFunctionItem(item) || 'running a long task';
+                        armIdleWatchdog();
+                      }
                       self.handleStartedItem(controller, item, streamState);
                       break;
                     }
 
                     case 'item.updated': {
                       const item = event.item as Record<string, unknown>;
+                      if (!longRunningToolHint && isLongRunningFunctionItem(item)) {
+                        longRunningToolHint = describeLongRunningFunctionItem(item) || 'running a long task';
+                        armIdleWatchdog();
+                      }
                       self.handleUpdatedItem(controller, item, streamState);
                       break;
                     }
 
                     case 'item.completed': {
                       const item = event.item as Record<string, unknown>;
+                      if (!longRunningToolHint && isLongRunningFunctionItem(item)) {
+                        longRunningToolHint = describeLongRunningFunctionItem(item) || 'running a long task';
+                        armIdleWatchdog();
+                      }
                       self.handleCompletedItem(controller, item, streamState);
                       break;
                     }
@@ -786,7 +850,7 @@ export class CodexProvider implements LLMProvider {
 
     switch (itemType) {
       case 'command_execution': {
-        const toolId = (item.id as string) || `tool-${Date.now()}`;
+        const toolId = getToolItemId(item);
         const command = item.command as string || '';
         const status = item.status as string | undefined;
 
@@ -810,8 +874,27 @@ export class CodexProvider implements LLMProvider {
         break;
       }
 
+      case 'function_call':
+      case 'custom_tool_call': {
+        const toolId = getToolItemId(item);
+        const name = getToolItemName(item);
+        const input = parseStructuredToolInput(item.arguments ?? item.input);
+        const status = item.status as string | undefined;
+
+        if (status === 'in_progress' && !streamState.announcedToolUses.has(toolId)) {
+          controller.enqueue(sseEvent('tool_use', {
+            id: toolId,
+            name,
+            input,
+            summary: name || 'Running tool',
+          }));
+          streamState.announcedToolUses.add(toolId);
+        }
+        break;
+      }
+
       case 'mcp_tool_call': {
-        const toolId = (item.id as string) || `tool-${Date.now()}`;
+        const toolId = getToolItemId(item);
         const server = item.server as string || '';
         const tool = item.tool as string || '';
         const args = item.arguments as unknown;
@@ -850,7 +933,7 @@ export class CodexProvider implements LLMProvider {
       }
 
       case 'command_execution': {
-        const toolId = (item.id as string) || `tool-${Date.now()}`;
+        const toolId = getToolItemId(item);
         const command = item.command as string || '';
         const output = item.aggregated_output as string || '';
         const exitCode = item.exit_code as number | undefined;
@@ -885,8 +968,51 @@ export class CodexProvider implements LLMProvider {
         break;
       }
 
+      case 'function_call':
+      case 'custom_tool_call': {
+        const toolId = getToolItemId(item);
+        const name = getToolItemName(item);
+        const input = parseStructuredToolInput(item.arguments ?? item.input);
+        const output = item.output as string | undefined;
+        const error = item.error as { message?: string } | string | undefined;
+        const errorMessage = typeof error === 'string' ? error : error?.message;
+
+        if (!streamState.announcedToolUses.has(toolId)) {
+          controller.enqueue(sseEvent('tool_use', {
+            id: toolId,
+            name,
+            input,
+            summary: name || 'Running tool',
+          }));
+          streamState.announcedToolUses.add(toolId);
+        }
+
+        controller.enqueue(sseEvent('tool_result', {
+          tool_use_id: toolId,
+          content: errorMessage || output || 'Done',
+          is_error: !!errorMessage,
+          summary: errorMessage ? `${name || 'Tool'} failed` : `${name || 'Tool'} completed`,
+          detail: summarizeOutput(errorMessage || output || ''),
+        }));
+        break;
+      }
+
+      case 'function_call_output':
+      case 'custom_tool_call_output': {
+        const toolId = getToolItemId(item);
+        const output = item.output as string | undefined;
+        controller.enqueue(sseEvent('tool_result', {
+          tool_use_id: toolId,
+          content: output || 'Done',
+          is_error: false,
+          summary: 'Tool completed',
+          detail: summarizeOutput(output || ''),
+        }));
+        break;
+      }
+
       case 'file_change': {
-        const toolId = (item.id as string) || `tool-${Date.now()}`;
+        const toolId = getToolItemId(item);
         const changes = item.changes as Array<{ path: string; kind: string }> || [];
         const summary = changes.map(c => `${c.kind}: ${c.path}`).join('\n');
 
@@ -905,7 +1031,7 @@ export class CodexProvider implements LLMProvider {
       }
 
       case 'mcp_tool_call': {
-        const toolId = (item.id as string) || `tool-${Date.now()}`;
+        const toolId = getToolItemId(item);
         const server = item.server as string || '';
         const tool = item.tool as string || '';
         const args = item.arguments as unknown;

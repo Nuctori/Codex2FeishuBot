@@ -308,6 +308,45 @@ describe('CodexProvider', () => {
     assert.equal(toolResult.content, JSON.stringify({ items: [1, 2, 3] }));
   });
 
+  it('maps wait_agent function calls to tool_use and tool_result events', async () => {
+    const { CodexProvider } = await import('../codex-provider.js');
+    const { PendingPermissions } = await import('../permission-gateway.js');
+    const provider = new CodexProvider(new PendingPermissions());
+
+    const chunks: string[] = [];
+    const mockController = {
+      enqueue: (chunk: string) => chunks.push(chunk),
+    } as unknown as ReadableStreamDefaultController<string>;
+    const streamState = {
+      announcedToolUses: new Set<string>(),
+      insertedCommandBlocks: new Set<string>(),
+    };
+
+    (provider as any).handleStartedItem(mockController, {
+      type: 'function_call',
+      id: 'fn-1',
+      name: 'wait_agent',
+      arguments: '{"targets":["agent-1"]}',
+      status: 'in_progress',
+    }, streamState);
+
+    (provider as any).handleCompletedItem(mockController, {
+      type: 'function_call_output',
+      call_id: 'fn-1',
+      output: '{"status":{"agent-1":{"completed":"done"}}}',
+    }, streamState);
+
+    const events = parseSSEChunks(chunks);
+    assert.equal(events.filter(e => e.type === 'tool_use').length, 1);
+    assert.equal(events.filter(e => e.type === 'tool_result').length, 1);
+    const toolUse = JSON.parse(events.find(e => e.type === 'tool_use')!.data);
+    assert.equal(toolUse.name, 'wait_agent');
+    assert.deepEqual(toolUse.input, { targets: ['agent-1'] });
+    const toolResult = JSON.parse(events.find(e => e.type === 'tool_result')!.data);
+    assert.equal(toolResult.tool_use_id, 'fn-1');
+    assert.match(toolResult.content, /agent-1/);
+  });
+
   it('skips empty agent_message', async () => {
     const { CodexProvider } = await import('../codex-provider.js');
     const { PendingPermissions } = await import('../permission-gateway.js');
@@ -945,6 +984,67 @@ describe('CodexProvider', () => {
       assert.match(errorEvent!.data, /timed out waiting .*first event/i);
     } finally {
       restoreEnv('CTI_CODEX_FIRST_EVENT_TIMEOUT_MS', oldTimeout);
+    }
+  });
+
+  it('extends the idle watchdog for long-running wait_agent turns', async () => {
+    const oldIdleTimeout = process.env.CTI_CODEX_IDLE_TIMEOUT_MS;
+    const oldLongTaskTimeout = process.env.CTI_CODEX_LONG_TASK_IDLE_TIMEOUT_MS;
+    process.env.CTI_CODEX_IDLE_TIMEOUT_MS = '20';
+    process.env.CTI_CODEX_LONG_TASK_IDLE_TIMEOUT_MS = '120';
+    try {
+      const { CodexProvider } = await import('../codex-provider.js');
+      const { PendingPermissions } = await import('../permission-gateway.js');
+      const provider = new CodexProvider(new PendingPermissions());
+
+      const mockThread = {
+        runStreamed: () => ({
+          events: (async function* () {
+            yield { type: 'thread.started', thread_id: 'codex-long-task' };
+            yield {
+              type: 'item.started',
+              item: {
+                type: 'function_call',
+                id: 'wait-1',
+                name: 'wait_agent',
+                arguments: '{"targets":["agent-1"]}',
+                status: 'in_progress',
+              },
+            };
+            await new Promise((resolve) => setTimeout(resolve, 60));
+            yield {
+              type: 'item.completed',
+              item: {
+                type: 'function_call_output',
+                call_id: 'wait-1',
+                output: '{"status":{"agent-1":{"completed":"ok"}}}',
+              },
+            };
+            yield { type: 'turn.completed', usage: { input_tokens: 1, output_tokens: 1, cached_input_tokens: 0 } };
+          })(),
+        }),
+      };
+
+      (provider as any).sdk = { Codex: class { constructor() {} } };
+      (provider as any).codex = {
+        startThread: () => mockThread,
+      };
+
+      const stream = provider.streamChat({
+        prompt: 'wait on subagent',
+        sessionId: 'long-task-session',
+      });
+
+      const chunks = await collectStream(stream);
+      const events = parseSSEChunks(chunks);
+      const errorEvent = events.find(e => e.type === 'error');
+      const resultEvent = events.find(e => e.type === 'result');
+
+      assert.equal(errorEvent, undefined, 'Long-running wait_agent turn should not trip the base idle watchdog');
+      assert.ok(resultEvent, 'Extended idle watchdog should allow the turn to complete');
+    } finally {
+      restoreEnv('CTI_CODEX_IDLE_TIMEOUT_MS', oldIdleTimeout);
+      restoreEnv('CTI_CODEX_LONG_TASK_IDLE_TIMEOUT_MS', oldLongTaskTimeout);
     }
   });
 

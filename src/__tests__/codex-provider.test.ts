@@ -149,6 +149,8 @@ describe('CodexProvider', () => {
     const streamState = {
       announcedToolUses: new Set<string>(),
       insertedCommandBlocks: new Set<string>(),
+      toolNames: new Map<string, string>(),
+      toolInputs: new Map<string, unknown>(),
     };
 
     (provider as any).handleStartedItem(mockController, {
@@ -182,6 +184,8 @@ describe('CodexProvider', () => {
     const streamState = {
       announcedToolUses: new Set<string>(),
       insertedCommandBlocks: new Set<string>(),
+      toolNames: new Map<string, string>(),
+      toolInputs: new Map<string, unknown>(),
     };
 
     (provider as any).handleStartedItem(mockController, {
@@ -320,6 +324,8 @@ describe('CodexProvider', () => {
     const streamState = {
       announcedToolUses: new Set<string>(),
       insertedCommandBlocks: new Set<string>(),
+      toolNames: new Map<string, string>(),
+      toolInputs: new Map<string, unknown>(),
     };
 
     (provider as any).handleStartedItem(mockController, {
@@ -342,9 +348,71 @@ describe('CodexProvider', () => {
     const toolUse = JSON.parse(events.find(e => e.type === 'tool_use')!.data);
     assert.equal(toolUse.name, 'wait_agent');
     assert.deepEqual(toolUse.input, { targets: ['agent-1'] });
+    assert.match(toolUse.summary, /Waiting on 1 subagent/);
     const toolResult = JSON.parse(events.find(e => e.type === 'tool_result')!.data);
     assert.equal(toolResult.tool_use_id, 'fn-1');
     assert.match(toolResult.content, /agent-1/);
+    assert.match(toolResult.summary, /Subagents: 1 done/);
+    assert.match(toolResult.detail, /agent-1: done/);
+  });
+
+  it('maps legacy response_item function calls for subagents into tool events', async () => {
+    const { CodexProvider } = await import('../codex-provider.js');
+    const { PendingPermissions } = await import('../permission-gateway.js');
+    const provider = new CodexProvider(new PendingPermissions());
+
+    const chunks: string[] = [];
+    const mockController = {
+      enqueue: (chunk: string) => chunks.push(chunk),
+    } as unknown as ReadableStreamDefaultController<string>;
+    const streamState = {
+      announcedToolUses: new Set<string>(),
+      insertedCommandBlocks: new Set<string>(),
+      toolNames: new Map<string, string>(),
+      toolInputs: new Map<string, unknown>(),
+    };
+
+    (provider as any).handleStartedItem(mockController, {
+      type: 'function_call',
+      call_id: 'call_spawn',
+      name: 'spawn_agent',
+      arguments: '{"agent_type":"default","model":"gpt-5.1-codex-mini"}',
+      status: 'in_progress',
+    }, streamState);
+
+    (provider as any).handleCompletedItem(mockController, {
+      type: 'function_call_output',
+      call_id: 'call_spawn',
+      output: '{"agent_id":"agent-1","nickname":"Parfit"}',
+    }, streamState);
+
+    const events = parseSSEChunks(chunks);
+    const toolUse = JSON.parse(events.find(e => e.type === 'tool_use')!.data);
+    const toolResult = JSON.parse(events.find(e => e.type === 'tool_result')!.data);
+    assert.equal(toolUse.name, 'spawn_agent');
+    assert.match(toolUse.summary, /Spawning subagent/);
+    assert.match(toolResult.summary, /Spawned Parfit/);
+    assert.match(toolResult.detail, /agent-1/);
+  });
+
+  it('maps legacy event_msg agent_message to text SSE event', async () => {
+    const { CodexProvider } = await import('../codex-provider.js');
+    const { PendingPermissions } = await import('../permission-gateway.js');
+    const provider = new CodexProvider(new PendingPermissions());
+
+    const chunks: string[] = [];
+    const mockController = {
+      enqueue: (chunk: string) => chunks.push(chunk),
+    } as unknown as ReadableStreamDefaultController<string>;
+
+    (provider as any).handleCompletedItem(mockController, {
+      type: 'agent_message',
+      text: 'subagent 已启动',
+    });
+
+    const events = parseSSEChunks(chunks);
+    assert.equal(events[0].type, 'text');
+    assert.match(events[0].data, /subagent 已启动/);
   });
 
   it('skips empty agent_message', async () => {

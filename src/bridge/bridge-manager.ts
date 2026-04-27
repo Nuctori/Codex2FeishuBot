@@ -269,6 +269,13 @@ type CodexDiscoveryCache = {
 
 let codexDiscoveryCache: CodexDiscoveryCache | null = null;
 const nativeSessionMessageCache = new Map<string, { mtimeMs: number; messages: BridgeMessage[] }>();
+const nativeSessionToolCache = new Map<string, { mtimeMs: number; tools: ToolCallInfo[] }>();
+const SUBAGENT_TOOL_NAMES = new Set([
+  'spawn_agent',
+  'wait_agent',
+  'send_input',
+  'resume_agent',
+]);
 
 function getSessionListingStore(): SessionListingStore {
   return getBridgeContext().store as SessionListingStore;
@@ -747,6 +754,7 @@ function listKnownSessions(): NamedBridgeSession[] {
 function clearCodexDiscoveryCache(): void {
   codexDiscoveryCache = null;
   nativeSessionMessageCache.clear();
+  nativeSessionToolCache.clear();
 }
 
 function normalizeProjectPath(rawPath: string | null | undefined): string {
@@ -1317,6 +1325,259 @@ function getNativeSessionMessages(session: NamedBridgeSession | null | undefined
 
   nativeSessionMessageCache.set(logPath, { mtimeMs, messages });
   return messages;
+}
+
+function tryParseJsonObject(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== 'string') {
+    return value && typeof value === 'object' && !Array.isArray(value)
+      ? value as Record<string, unknown>
+      : null;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = JSON.parse(trimmed);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function pluralizeSubagent(count: number): string {
+  return count === 1 ? 'subagent' : 'subagents';
+}
+
+function summarizeToolOutputLine(output: string): string | undefined {
+  const trimmed = output.trim();
+  if (!trimmed) return undefined;
+  const firstLine = trimmed.split(/\r?\n/).find(Boolean) || trimmed;
+  return firstLine.length > 120 ? `${firstLine.slice(0, 117)}...` : firstLine;
+}
+
+function summarizeNativeToolUse(name: string, input: unknown): { summary: string; detail?: string } {
+  const normalizedName = name.trim();
+  if (normalizedName === 'wait_agent') {
+    const parsed = input && typeof input === 'object' ? input as Record<string, unknown> : null;
+    const targets = Array.isArray(parsed?.targets) ? parsed.targets.filter(target => typeof target === 'string') : [];
+    const count = targets.length;
+    return {
+      summary: count > 0
+        ? `Waiting on ${count} ${pluralizeSubagent(count)}`
+        : 'Waiting on subagents',
+      detail: count > 0 ? targets.join(', ') : undefined,
+    };
+  }
+
+  if (normalizedName === 'spawn_agent') {
+    const parsed = input && typeof input === 'object' ? input as Record<string, unknown> : null;
+    const agentType = typeof parsed?.agent_type === 'string' && parsed.agent_type.trim()
+      ? parsed.agent_type.trim()
+      : 'default';
+    const model = typeof parsed?.model === 'string' && parsed.model.trim()
+      ? parsed.model.trim()
+      : '';
+    return {
+      summary: 'Spawning subagent',
+      detail: model ? `${agentType} · ${model}` : agentType,
+    };
+  }
+
+  if (normalizedName === 'send_input' || normalizedName === 'resume_agent') {
+    const parsed = input && typeof input === 'object' ? input as Record<string, unknown> : null;
+    const target = typeof parsed?.target === 'string' ? parsed.target : '';
+    return {
+      summary: normalizedName === 'send_input' ? 'Coordinating subagents' : 'Resuming subagent',
+      detail: target || undefined,
+    };
+  }
+
+  return { summary: normalizedName || 'Running tool' };
+}
+
+function summarizeNativeToolResult(
+  name: string,
+  input: unknown,
+  output: string,
+  isError: boolean,
+): { summary: string; detail?: string } {
+  const normalizedName = name.trim();
+  if (isError) {
+    return {
+      summary: `${normalizedName || 'Tool'} failed`,
+      detail: summarizeToolOutputLine(output),
+    };
+  }
+
+  const parsed = tryParseJsonObject(output);
+
+  if (normalizedName === 'spawn_agent') {
+    const nickname = typeof parsed?.nickname === 'string' && parsed.nickname.trim() ? parsed.nickname.trim() : '';
+    const agentId = typeof parsed?.agent_id === 'string' ? parsed.agent_id : '';
+    return {
+      summary: nickname ? `Spawned ${nickname}` : 'Spawned subagent',
+      detail: nickname && agentId ? `${nickname} · ${agentId}` : agentId || undefined,
+    };
+  }
+
+  if (normalizedName === 'wait_agent') {
+    if (parsed?.timed_out === true) {
+      return {
+        summary: 'Timed out waiting on subagents',
+        detail: summarizeNativeToolUse(normalizedName, input).detail,
+      };
+    }
+    const status = parsed?.status;
+    if (status && typeof status === 'object' && !Array.isArray(status)) {
+      const entries = Object.entries(status as Record<string, unknown>);
+      const completed = entries.filter(([, value]) => value && typeof value === 'object' && 'completed' in (value as Record<string, unknown>)).length;
+      const running = entries.length - completed;
+      const parts: string[] = [];
+      if (completed > 0) parts.push(`${completed} done`);
+      if (running > 0) parts.push(`${running} pending`);
+      return {
+        summary: parts.length > 0 ? `Subagents: ${parts.join(', ')}` : 'Subagents completed',
+        detail: entries.slice(0, 4).map(([agentId, value]) => {
+          const record = value && typeof value === 'object' ? value as Record<string, unknown> : null;
+          if (typeof record?.completed === 'string' && record.completed.trim()) {
+            return `${agentId}: ${record.completed.trim()}`;
+          }
+          return `${agentId}: pending`;
+        }).join(' · ') || undefined,
+      };
+    }
+    const fallback = summarizeNativeToolUse(normalizedName, input);
+    return {
+      summary: fallback.summary.replace(/^Waiting on/i, 'Finished waiting on'),
+      detail: fallback.detail,
+    };
+  }
+
+  if (normalizedName === 'send_input' || normalizedName === 'resume_agent') {
+    const fallback = summarizeNativeToolUse(normalizedName, input);
+    return {
+      summary: normalizedName === 'send_input' ? 'Subagent updated' : 'Subagent resumed',
+      detail: fallback.detail,
+    };
+  }
+
+  return {
+    summary: `${normalizedName || 'Tool'} completed`,
+    detail: summarizeToolOutputLine(output),
+  };
+}
+
+function getNativeSessionToolCalls(session: NamedBridgeSession | null | undefined): ToolCallInfo[] {
+  const logPath = getNativeSessionLogPath(session);
+  if (!logPath) return [];
+
+  const mtimeMs = safeStatMtimeMs(logPath);
+  const cached = nativeSessionToolCache.get(logPath);
+  if (cached && cached.mtimeMs === mtimeMs) {
+    return cached.tools;
+  }
+
+  const tools = new Map<string, ToolCallInfo>();
+
+  try {
+    const fileText = fs.readFileSync(logPath, 'utf8');
+    for (const line of fileText.split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      try {
+        const item = JSON.parse(line) as {
+          type?: unknown;
+          payload?: Record<string, unknown>;
+        };
+        if (item.type !== 'response_item') continue;
+        const payload = item.payload;
+        if (!payload) continue;
+
+        if (payload.type === 'function_call') {
+          const toolName = typeof payload.name === 'string' ? payload.name.trim() : '';
+          if (!SUBAGENT_TOOL_NAMES.has(toolName)) continue;
+          const toolId = typeof payload.call_id === 'string' ? payload.call_id : (typeof payload.id === 'string' ? payload.id : '');
+          if (!toolId) continue;
+          const input = tryParseJsonObject(payload.arguments) || {};
+          const summary = summarizeNativeToolUse(toolName, input);
+          tools.set(toolId, {
+            id: toolId,
+            name: toolName,
+            status: 'running',
+            summary: summary.summary,
+            detail: summary.detail,
+            input,
+          });
+          continue;
+        }
+
+        if (payload.type === 'function_call_output') {
+          const toolId = typeof payload.call_id === 'string' ? payload.call_id : (typeof payload.id === 'string' ? payload.id : '');
+          if (!toolId) continue;
+          const existing = tools.get(toolId);
+          if (!existing || !SUBAGENT_TOOL_NAMES.has(existing.name)) continue;
+          const output = typeof payload.output === 'string' ? payload.output : '';
+          const summary = summarizeNativeToolResult(existing.name, existing.input, output, false);
+          tools.set(toolId, {
+            ...existing,
+            status: 'complete',
+            summary: summary.summary,
+            detail: summary.detail,
+          });
+        }
+      } catch {
+        // Ignore partially written rows while Codex is still appending to the log.
+      }
+    }
+  } catch {
+    return [];
+  }
+
+  const collected = Array.from(tools.values());
+  nativeSessionToolCache.set(logPath, { mtimeMs, tools: collected });
+  return collected;
+}
+
+function getNativeSessionToolCallsForSession(sessionId: string): ToolCallInfo[] {
+  const direct = getCodexSessionById(sessionId) ?? resolveDisplaySession(sessionId);
+  return getNativeSessionToolCalls(direct);
+}
+
+function hydrateSubagentToolsFromNativeLog(
+  sessionId: string | null | undefined,
+  toolCallTracker: Map<string, ToolCallInfo>,
+): ToolCallInfo[] {
+  if (!sessionId) return [];
+
+  let nativeSession = getCodexSessionById(sessionId);
+  if (!nativeSession) {
+    clearCodexDiscoveryCache();
+    nativeSession = getCodexSessionById(sessionId);
+  }
+  if (!nativeSession) return [];
+
+  const fallbackTools = getNativeSessionToolCalls(nativeSession)
+    .filter((tool) => SUBAGENT_TOOL_NAMES.has(tool.name));
+  const hydrated: ToolCallInfo[] = [];
+
+  for (const tool of fallbackTools) {
+    const existing = toolCallTracker.get(tool.id);
+    if (
+      existing
+      && existing.status === tool.status
+      && existing.summary === tool.summary
+      && existing.detail === tool.detail
+    ) {
+      continue;
+    }
+    toolCallTracker.set(tool.id, {
+      ...existing,
+      ...tool,
+    });
+    hydrated.push(toolCallTracker.get(tool.id)!);
+  }
+
+  return hydrated;
 }
 
 function getEffectiveSessionMessages(sessionId: string): { session: NamedBridgeSession; messages: BridgeMessage[] } | null {
@@ -3825,7 +4086,34 @@ async function handleMessage(
   const toolCallTracker = new Map<string, ToolCallInfo>();
 
   const onStreamCardText = hasStreamingCards ? (fullText: string, context: StreamContext) => {
-    try { adapter.onStreamText!(msg.address.chatId, fullText, context); } catch { /* non-critical */ }
+    try {
+      adapter.onStreamText!(msg.address.chatId, fullText, context);
+      const sdkSessionId = getSessionListingStore()
+        .getChannelBinding(binding.channelType, binding.chatId, binding.bindingKey)?.sdkSessionId
+        || binding.sdkSessionId
+        || '';
+      const hydratedTools = hydrateSubagentToolsFromNativeLog(sdkSessionId, toolCallTracker);
+      if (hydratedTools.length > 0 && typeof adapter.onToolEvent === 'function') {
+        try {
+          console.log('[bridge-manager] hydrated subagent tools during streaming:', JSON.stringify({
+            sdkSessionId,
+            toolCount: hydratedTools.length,
+            tools: hydratedTools.map((tool) => ({
+              id: tool.id,
+              name: tool.name,
+              status: tool.status,
+              summary: tool.summary,
+              detail: tool.detail,
+            })),
+          }));
+          adapter.onToolEvent(msg.address.chatId, Array.from(toolCallTracker.values()), context);
+        } catch {
+          // best effort fallback only
+        }
+      }
+    } catch {
+      /* non-critical */
+    }
   } : undefined;
 
   const onToolEvent = hasStreamingCards ? (
@@ -3833,21 +4121,52 @@ async function handleMessage(
     toolName: string,
     status: 'running' | 'complete' | 'error',
     summary?: string,
+    detail?: string,
+    input?: unknown,
   ) => {
+    try {
+      console.log('[bridge-manager] onToolEvent received:', JSON.stringify({
+        toolId,
+        toolName,
+        status,
+        summary,
+        detail,
+      }));
+    } catch {
+      // best effort logging only
+    }
+    const existing = toolCallTracker.get(toolId);
     if (toolName) {
-      const existing = toolCallTracker.get(toolId);
       toolCallTracker.set(toolId, {
         id: toolId,
         name: toolName,
         status,
         summary: summary || existing?.summary,
+        detail: detail || existing?.detail,
+        input: input ?? existing?.input,
+        updatedAt: Date.now(),
       });
     } else {
       // tool_result doesn't carry name 閳?update existing entry's status
-      const existing = toolCallTracker.get(toolId);
-      if (existing) existing.status = status;
+      if (existing) {
+        existing.status = status;
+        existing.summary = summary || existing.summary;
+        existing.detail = detail || existing.detail;
+        if (input !== undefined) existing.input = input;
+        existing.updatedAt = Date.now();
+      }
     }
     try {
+        console.log('[bridge-manager] forwarding tool tracker:', JSON.stringify({
+          count: toolCallTracker.size,
+          tools: Array.from(toolCallTracker.values()).map((tool) => ({
+            id: tool.id,
+            name: tool.name,
+            status: tool.status,
+            summary: tool.summary,
+            detail: tool.detail,
+          })),
+        }));
         adapter.onToolEvent!(msg.address.chatId, Array.from(toolCallTracker.values()), streamContext);
     } catch { /* non-critical */ }
   } : undefined;
@@ -3875,13 +4194,38 @@ async function handleMessage(
         perm.suggestions,
         msg.messageId,
       );
-    }, taskAbort.signal, hasAttachments ? msg.attachments : undefined, onPartialText, onToolEvent);
+    }, taskAbort.signal, hasAttachments ? msg.attachments : undefined, onPartialText, (toolId, toolName, status, meta) => {
+      onToolEvent?.(toolId, toolName, status, meta?.summary, meta?.detail, meta?.input);
+    });
 
     // Finalize streaming card if adapter supports it.
     // onStreamEnd awaits any in-flight card creation and returns true if a card
     // was actually finalized (meaning content is already visible to the user).
     let cardFinalized = false;
     if (hasStreamingCards && adapter.onStreamEnd) {
+      const hasTrackedSubagentTools = Array.from(toolCallTracker.values())
+        .some((tool) => SUBAGENT_TOOL_NAMES.has(tool.name));
+      if (!hasTrackedSubagentTools && result.sdkSessionId && typeof adapter.onToolEvent === 'function') {
+        const fallbackTools = hydrateSubagentToolsFromNativeLog(result.sdkSessionId, toolCallTracker);
+        if (fallbackTools.length > 0) {
+          try {
+            console.log('[bridge-manager] hydrated subagent tools from native session log:', JSON.stringify({
+              sdkSessionId: result.sdkSessionId,
+              toolCount: fallbackTools.length,
+              tools: fallbackTools.map((tool) => ({
+                id: tool.id,
+                name: tool.name,
+                status: tool.status,
+                summary: tool.summary,
+                detail: tool.detail,
+              })),
+            }));
+            adapter.onToolEvent(msg.address.chatId, Array.from(toolCallTracker.values()), streamContext);
+          } catch {
+            // best effort fallback only
+          }
+        }
+      }
       try {
         const status = result.hasError ? 'error' : 'completed';
         cardFinalized = await adapter.onStreamEnd(msg.address.chatId, status, result.responseText, streamContext);
@@ -4237,4 +4581,6 @@ export const _testOnly = {
   sendFeishuNavigationCard,
   handleMessage,
   isNumericPermissionShortcut,
+  getNativeSessionToolCallsForSession,
+  hydrateSubagentToolsFromNativeLog,
 };

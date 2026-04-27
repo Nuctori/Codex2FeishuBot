@@ -6,7 +6,7 @@ import path from 'node:path';
 import { FeishuAdapter } from '../bridge/adapters/feishu-adapter.js';
 import { initBridgeContext } from '../bridge/context.js';
 import { _testOnly as bridgeTestOnly } from '../bridge/bridge-manager.js';
-import { buildToolProgressMarkdown } from '../bridge/markdown/feishu.js';
+import { buildStreamingContent, buildToolProgressMarkdown } from '../bridge/markdown/feishu.js';
 
 import { CTI_HOME } from '../config.js';
 import { JsonFileStore } from '../store.js';
@@ -356,6 +356,171 @@ describe('Feishu navigation cards', () => {
     assert.ok(previewCard);
     assert.match(previewCard!, /first native question/);
     assert.match(previewCard!, /first native answer/);
+  });
+
+  it('extracts native subagent tool progress from codex session logs', () => {
+    fs.mkdirSync(TEST_CODEX_HOME, { recursive: true });
+    fs.appendFileSync(
+      path.join(TEST_CODEX_HOME, 'session_index.jsonl'),
+      `${JSON.stringify({
+        id: '55555555-5555-4555-8555-555555555555',
+        thread_name: 'Native subagent flow',
+        updated_at: '2026-04-11T00:10:00.000Z',
+      })}\n`,
+      'utf8',
+    );
+
+    const sessionDir = path.join(TEST_CODEX_HOME, 'sessions', '2026', '04', '11');
+    fs.mkdirSync(sessionDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(sessionDir, 'rollout-55555555-5555-4555-8555-555555555555.jsonl'),
+      `${[
+        JSON.stringify({
+          timestamp: '2026-04-11T00:00:00.000Z',
+          type: 'session_meta',
+          payload: {
+            id: '55555555-5555-4555-8555-555555555555',
+            cwd: 'D:\\projects\\alpha-service',
+            timestamp: '2026-04-11T00:00:00.000Z',
+          },
+        }),
+        JSON.stringify({
+          timestamp: '2026-04-11T00:00:01.000Z',
+          type: 'response_item',
+          payload: {
+            type: 'function_call',
+            name: 'spawn_agent',
+            arguments: '{"agent_type":"default","model":"gpt-5.4"}',
+            call_id: 'call_spawn_1',
+          },
+        }),
+        JSON.stringify({
+          timestamp: '2026-04-11T00:00:02.000Z',
+          type: 'response_item',
+          payload: {
+            type: 'function_call_output',
+            call_id: 'call_spawn_1',
+            output: '{"agent_id":"agent-1","nickname":"Arendt"}',
+          },
+        }),
+        JSON.stringify({
+          timestamp: '2026-04-11T00:00:03.000Z',
+          type: 'response_item',
+          payload: {
+            type: 'function_call',
+            name: 'wait_agent',
+            arguments: '{"targets":["agent-1"]}',
+            call_id: 'call_wait_1',
+          },
+        }),
+        JSON.stringify({
+          timestamp: '2026-04-11T00:00:04.000Z',
+          type: 'response_item',
+          payload: {
+            type: 'function_call_output',
+            call_id: 'call_wait_1',
+            output: '{"status":{"agent-1":{"completed":"subagent 测试成功"}},"timed_out":false}',
+          },
+        }),
+      ].join('\n')}\n`,
+      'utf8',
+    );
+
+    const store = new JsonFileStore(makeSettings());
+    initTestContext(store);
+
+    const tools = bridgeTestOnly.getNativeSessionToolCallsForSession('55555555-5555-4555-8555-555555555555');
+
+    assert.equal(tools.length, 2);
+    assert.equal(tools[0].name, 'spawn_agent');
+    assert.match(tools[0].summary || '', /Spawned Arendt/);
+    assert.match(tools[0].detail || '', /agent-1/);
+    assert.equal(tools[1].name, 'wait_agent');
+    assert.match(tools[1].summary || '', /Subagents: 1 done/);
+    assert.match(tools[1].detail || '', /subagent 测试成功/);
+  });
+
+  it('hydrates subagent tools from native logs into an existing tracker', () => {
+    fs.mkdirSync(TEST_CODEX_HOME, { recursive: true });
+    fs.appendFileSync(
+      path.join(TEST_CODEX_HOME, 'session_index.jsonl'),
+      `${JSON.stringify({
+        id: '66666666-6666-4666-8666-666666666666',
+        thread_name: 'Native hydrate flow',
+        updated_at: '2026-04-11T00:10:00.000Z',
+      })}\n`,
+      'utf8',
+    );
+
+    const sessionDir = path.join(TEST_CODEX_HOME, 'sessions', '2026', '04', '11');
+    fs.mkdirSync(sessionDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(sessionDir, 'rollout-66666666-6666-4666-8666-666666666666.jsonl'),
+      `${[
+        JSON.stringify({
+          timestamp: '2026-04-11T00:00:00.000Z',
+          type: 'session_meta',
+          payload: {
+            id: '66666666-6666-4666-8666-666666666666',
+            cwd: 'D:\\projects\\alpha-service',
+            timestamp: '2026-04-11T00:00:00.000Z',
+          },
+        }),
+        JSON.stringify({
+          timestamp: '2026-04-11T00:00:01.000Z',
+          type: 'response_item',
+          payload: {
+            type: 'function_call',
+            name: 'spawn_agent',
+            arguments: '{"agent_type":"default","model":"gpt-5.4"}',
+            call_id: 'call_spawn_2',
+          },
+        }),
+        JSON.stringify({
+          timestamp: '2026-04-11T00:00:02.000Z',
+          type: 'response_item',
+          payload: {
+            type: 'function_call_output',
+            call_id: 'call_spawn_2',
+            output: '{"agent_id":"agent-2","nickname":"Turing"}',
+          },
+        }),
+        JSON.stringify({
+          timestamp: '2026-04-11T00:00:03.000Z',
+          type: 'response_item',
+          payload: {
+            type: 'function_call',
+            name: 'wait_agent',
+            arguments: '{"targets":["agent-2"]}',
+            call_id: 'call_wait_2',
+          },
+        }),
+        JSON.stringify({
+          timestamp: '2026-04-11T00:00:04.000Z',
+          type: 'response_item',
+          payload: {
+            type: 'function_call_output',
+            call_id: 'call_wait_2',
+            output: '{"status":{"agent-2":{"completed":"subagent 测试成功"}},"timed_out":false}',
+          },
+        }),
+      ].join('\n')}\n`,
+      'utf8',
+    );
+
+    const store = new JsonFileStore(makeSettings());
+    initTestContext(store);
+
+    const tracker = new Map<string, any>();
+    const hydrated = bridgeTestOnly.hydrateSubagentToolsFromNativeLog(
+      '66666666-6666-4666-8666-666666666666',
+      tracker,
+    );
+
+    assert.equal(hydrated.length, 2);
+    assert.equal(tracker.size, 2);
+    assert.equal(tracker.get('call_spawn_2')?.name, 'spawn_agent');
+    assert.equal(tracker.get('call_wait_2')?.status, 'complete');
   });
 
   it('prefers native codex metadata for mirrored current sessions', () => {
@@ -765,6 +930,55 @@ describe('Feishu navigation cards', () => {
     assert.match(markdown, /git status --short/);
   });
 
+  it('renders subagent progress as a separate compact block ahead of generic tools', () => {
+    const markdown = buildToolProgressMarkdown([
+      {
+        id: 'tool-1',
+        name: 'wait_agent',
+        status: 'running',
+        summary: 'Waiting on 2 subagents',
+        detail: 'Harvey, worker-2',
+        updatedAt: 2,
+      },
+      {
+        id: 'tool-2',
+        name: 'spawn_agent',
+        status: 'complete',
+        summary: 'Spawned Harvey',
+        detail: 'Harvey · agent-1',
+        updatedAt: 1,
+      },
+      {
+        id: 'tool-3',
+        name: 'Bash',
+        status: 'complete',
+        summary: 'git status --short',
+      },
+    ], { elapsedMs: 192000 });
+
+    assert.match(markdown, /\*\*(Subagents|子代理)\*\*/);
+    assert.match(markdown, /(3m 12s|192000ms)/);
+    assert.match(markdown, /Waiting on 2 subagents/);
+    assert.match(markdown, /Spawned Harvey/);
+    assert.match(markdown, /`Bash`/);
+  });
+
+  it('places subagent status above streaming text for mobile-friendly cards', () => {
+    const content = buildStreamingContent('Final text body', [
+      {
+        id: 'tool-1',
+        name: 'wait_agent',
+        status: 'running',
+        summary: 'Waiting on 1 subagent',
+        detail: 'agent-1',
+        updatedAt: 1,
+      },
+    ], { elapsedMs: 65000 });
+
+    assert.ok(content.indexOf('Subagents') >= 0 || content.indexOf('子代理') >= 0);
+    assert.ok(content.indexOf('Final text body') > content.indexOf('Waiting on 1 subagent'));
+  });
+
   it('does not create a second card when an in-place update fails', async () => {
     const sendCalls: Array<{ updateMessageId?: string }> = [];
     const fakeAdapter = {
@@ -789,6 +1003,7 @@ describe('Feishu navigation cards', () => {
   it('uses CardKit v1 for streaming card create, content, and finalize', async () => {
     const adapter = new FeishuAdapter() as any;
     const calls: string[] = [];
+    const cardJsonUpdates: string[] = [];
 
     adapter.restClient = {
       cardkit: {
@@ -804,12 +1019,7 @@ describe('Feishu navigation cards', () => {
             },
             update: async (payload: { path: { card_id: string }; data: { card: { type: string; data: string }; sequence: number } }) => {
               calls.push(`update:${payload.path.card_id}:${payload.data.sequence}:${payload.data.card.type}`);
-              return { data: {} };
-            },
-          },
-          cardElement: {
-            content: async (payload: { path: { card_id: string; element_id: string }; data: { content: string; sequence: number } }) => {
-              calls.push(`content:${payload.path.card_id}:${payload.path.element_id}:${payload.data.sequence}`);
+              cardJsonUpdates.push(payload.data.card.data);
               return { data: {} };
             },
           },
@@ -829,9 +1039,66 @@ describe('Feishu navigation cards', () => {
 
     assert.equal(finalized, true);
     assert.ok(calls.some((entry) => entry === 'create:card_json'));
-    assert.ok(calls.some((entry) => entry.startsWith('content:card_1:streaming_content:')));
+    assert.ok(calls.filter((entry) => entry.startsWith('update:card_1:')).length >= 2);
+    assert.ok(cardJsonUpdates.some((json) => json.includes('hello stream')));
+    assert.ok(cardJsonUpdates.some((json) => json.includes('final answer')));
     assert.ok(calls.some((entry) => entry.includes('settings:card_1:') && entry.includes('"streaming_mode":false')));
     assert.ok(calls.some((entry) => entry.startsWith('update:card_1:') && entry.endsWith(':card_json')));
+  });
+
+  it('retains tool progress that arrives before the streaming card exists', async () => {
+    const adapter = new FeishuAdapter() as any;
+    const cardUpdates: string[] = [];
+
+    adapter.restClient = {
+      cardkit: {
+        v1: {
+          card: {
+            create: async () => ({ data: { card_id: 'card_2' } }),
+            settings: async () => ({ data: {} }),
+            update: async (payload: { data: { card: { data: string } } }) => {
+              cardUpdates.push(payload.data.card.data);
+              return { data: {} };
+            },
+          },
+        },
+      },
+      im: {
+        message: {
+          reply: async () => ({ data: { message_id: 'om_stream_2' } }),
+        },
+      },
+    };
+
+    const context = {
+      requestId: 'req-1',
+      sessionId: 'session-1',
+      messageId: 'om_user_2',
+      workingDirectory: 'C:\\Users\\Nuctori\\.codex\\skills\\Claude-to-IM-skill',
+      model: 'gpt-5.4',
+    };
+
+    adapter.onToolEvent('chat-1', [{
+      id: 'tool-1',
+      name: 'wait_agent',
+      status: 'running',
+      summary: 'Waiting on 1 subagent',
+      detail: 'Tesla',
+    }], context);
+
+    await adapter.onStreamText('chat-1', 'subagent in progress', context);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await adapter.onStreamEnd('chat-1', 'completed', 'subagent done', context);
+
+    assert.ok(cardUpdates.some((json) => json.includes('Waiting on 1 subagent')));
+    const parsed = cardUpdates.map((json) => JSON.parse(json));
+    const separated = parsed.some((card) => {
+      const elements = card?.body?.elements ?? [];
+      const subagentIndex = elements.findIndex((element: any) => String(element?.content || '').includes('Waiting on 1 subagent'));
+      const bodyIndex = elements.findIndex((element: any) => String(element?.content || '').includes('subagent in progress'));
+      return subagentIndex >= 0 && bodyIndex >= 0 && subagentIndex !== bodyIndex;
+    });
+    assert.equal(separated, true);
   });
 
   it('deduplicates repeated card action callbacks by token', async () => {

@@ -34,10 +34,12 @@ import {
   hasComplexMarkdown,
   buildCardContent,
   buildPostContent,
+  buildStreamingCardJson,
   buildStreamingContent,
   buildFinalCardJson,
   buildPermissionButtonCard,
   formatElapsed,
+  hasRunningSubagentTools,
 } from '../markdown/feishu.js';
 import { localizeText } from '../i18n.js';
 
@@ -63,6 +65,7 @@ interface FeishuCardState {
   pendingText: string | null;
   lastUpdateAt: number;
   throttleTimer: ReturnType<typeof setTimeout> | null;
+  heartbeatTimer: ReturnType<typeof setInterval> | null;
   context: FeishuStreamingCardContext;
 }
 
@@ -80,6 +83,7 @@ interface FeishuTypingReactionState {
 
 /** Streaming card throttle interval (ms). */
 const CARD_THROTTLE_MS = 200;
+const CARD_HEARTBEAT_MS = 3000;
 
 function getProjectLabelFromPath(projectPath: string): string {
   const normalized = String(projectPath || '').replace(/\\/g, '/').replace(/\/+$/, '');
@@ -155,6 +159,7 @@ export class FeishuAdapter extends BaseChannelAdapter {
   private typingReactions = new Map<string, FeishuTypingReactionState>();
   /** Active streaming card state per request. */
   private activeCards = new Map<string, FeishuCardState>();
+  private pendingToolCalls = new Map<string, ToolCallInfo[]>();
   /** In-flight card creation promises per request — prevents duplicate creation. */
   private cardCreatePromises = new Map<string, Promise<boolean>>();
 
@@ -258,6 +263,7 @@ export class FeishuAdapter extends BaseChannelAdapter {
       if (state.throttleTimer) clearTimeout(state.throttleTimer);
     }
     this.activeCards.clear();
+    this.pendingToolCalls.clear();
     this.cardCreatePromises.clear();
 
     // Clear state
@@ -608,11 +614,12 @@ export class FeishuAdapter extends BaseChannelAdapter {
         messageId,
         sequence: 0,
         startTime: Date.now(),
-        toolCalls: [],
+        toolCalls: this.pendingToolCalls.get(streamKey)?.slice() || [],
         thinking: true,
         pendingText: null,
         lastUpdateAt: 0,
         throttleTimer: null,
+        heartbeatTimer: null,
         context: navContext || {
           projectLabel: getProjectLabelFromPath(context?.workingDirectory || ''),
           projectPath: context?.workingDirectory || '',
@@ -668,20 +675,22 @@ export class FeishuAdapter extends BaseChannelAdapter {
     const state = this.activeCards.get(this.getStreamKey(chatId, context));
     if (!state || !this.restClient) return;
 
-    const content = buildStreamingContent(state.pendingText || '', state.toolCalls);
+    const cardJson = buildStreamingCardJson(state.pendingText || '', state.toolCalls, state.context, {
+      elapsedMs: Date.now() - state.startTime,
+    });
 
     state.sequence++;
     const seq = state.sequence;
     const cardId = state.cardId;
 
     // Fire-and-forget — streaming updates are non-critical
-    (this.restClient as any).cardkit.v1.cardElement.content({
-      path: { card_id: cardId, element_id: 'streaming_content' },
-      data: { content, sequence: seq },
+    (this.restClient as any).cardkit.v1.card.update({
+      path: { card_id: cardId },
+      data: { card: { type: 'card_json', data: cardJson }, sequence: seq },
     }).then(() => {
       state.lastUpdateAt = Date.now();
     }).catch((err: unknown) => {
-      console.warn('[feishu-adapter] streamContent failed:', err instanceof Error ? err.message : err);
+      console.warn('[feishu-adapter] streamCardUpdate failed:', err instanceof Error ? err.message : err);
     });
   }
 
@@ -689,11 +698,59 @@ export class FeishuAdapter extends BaseChannelAdapter {
    * Update tool progress in the streaming card.
    */
   private updateToolProgress(chatId: string, tools: ToolCallInfo[], context?: StreamContext): void {
-    const state = this.activeCards.get(this.getStreamKey(chatId, context));
+    const streamKey = this.getStreamKey(chatId, context);
+    const snapshot = tools.map((tool) => ({ ...tool }));
+    this.pendingToolCalls.set(streamKey, snapshot);
+    try {
+      console.log('[feishu-adapter] Tool progress snapshot:', JSON.stringify({
+        streamKey,
+        count: snapshot.length,
+        tools: snapshot.map((tool) => ({
+          id: tool.id,
+          name: tool.name,
+          status: tool.status,
+          summary: tool.summary,
+          detail: tool.detail,
+        })),
+      }));
+    } catch {
+      // best effort logging only
+    }
+
+    const state = this.activeCards.get(streamKey);
     if (!state) return;
-    state.toolCalls = tools;
+    state.toolCalls = snapshot;
+    this.syncCardHeartbeat(state, context);
     // Trigger a content flush with current text + updated tools
     this.updateCardContent(chatId, state.pendingText || '', context);
+  }
+
+  private clearHeartbeatTimer(state: FeishuCardState): void {
+    if (!state.heartbeatTimer) return;
+    clearInterval(state.heartbeatTimer);
+    state.heartbeatTimer = null;
+  }
+
+  private syncCardHeartbeat(state: FeishuCardState, context?: StreamContext): void {
+    if (!hasRunningSubagentTools(state.toolCalls)) {
+      this.clearHeartbeatTimer(state);
+      return;
+    }
+    if (state.heartbeatTimer) {
+      return;
+    }
+    state.heartbeatTimer = setInterval(() => {
+      if (!this.activeCards.has(state.streamKey)) {
+        this.clearHeartbeatTimer(state);
+        return;
+      }
+      if (!hasRunningSubagentTools(state.toolCalls)) {
+        this.clearHeartbeatTimer(state);
+        return;
+      }
+      this.flushCardUpdate(state.chatId, context);
+    }, CARD_HEARTBEAT_MS);
+    state.heartbeatTimer.unref?.();
   }
 
   /**
@@ -720,6 +777,7 @@ export class FeishuAdapter extends BaseChannelAdapter {
       clearTimeout(state.throttleTimer);
       state.throttleTimer = null;
     }
+    this.clearHeartbeatTimer(state);
 
     let streamingClosed = false;
     try {
@@ -750,6 +808,23 @@ export class FeishuAdapter extends BaseChannelAdapter {
         elapsed: formatElapsed(elapsedMs),
       };
 
+      try {
+        console.log('[feishu-adapter] Finalizing card with tools:', JSON.stringify({
+          streamKey,
+          status,
+          toolCount: state.toolCalls.length,
+          tools: state.toolCalls.map((tool) => ({
+            id: tool.id,
+            name: tool.name,
+            status: tool.status,
+            summary: tool.summary,
+            detail: tool.detail,
+          })),
+        }));
+      } catch {
+        // best effort logging only
+      }
+
       const finalCardJson = buildFinalCardJson(responseText, state.toolCalls, footer, state.context);
 
       state.sequence++;
@@ -768,10 +843,13 @@ export class FeishuAdapter extends BaseChannelAdapter {
       if (streamingClosed) {
         try {
           state.sequence++;
-          await (this.restClient as any).cardkit.v1.cardElement.content({
-            path: { card_id: state.cardId, element_id: 'streaming_content' },
+          await (this.restClient as any).cardkit.v1.card.update({
+            path: { card_id: state.cardId },
             data: {
-              content: buildStreamingContent(responseText, state.toolCalls),
+              card: {
+                type: 'card_json',
+                data: buildStreamingCardJson(responseText, state.toolCalls, state.context),
+              },
               sequence: state.sequence,
             },
           });
@@ -782,6 +860,7 @@ export class FeishuAdapter extends BaseChannelAdapter {
       return false;
     } finally {
       this.activeCards.delete(streamKey);
+      this.pendingToolCalls.delete(streamKey);
     }
   }
 
@@ -796,7 +875,9 @@ export class FeishuAdapter extends BaseChannelAdapter {
     if (state.throttleTimer) {
       clearTimeout(state.throttleTimer);
     }
+    this.clearHeartbeatTimer(state);
     this.activeCards.delete(streamKey);
+    this.pendingToolCalls.delete(streamKey);
   }
 
   /**

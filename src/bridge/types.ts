@@ -184,6 +184,9 @@ export interface ToolCallInfo {
   name: string;
   status: 'running' | 'complete' | 'error';
   summary?: string;
+  detail?: string;
+  input?: unknown;
+  updatedAt?: number;
 }
 
 /** Per-request stream lifecycle metadata passed to adapters. */

@@ -43,7 +43,16 @@ export type OnPartialText = (fullText: string) => void;
  * Callback invoked when tool_use or tool_result SSE events arrive.
  * Used by bridge-manager to forward tool progress to adapters for real-time display.
  */
-export type OnToolEvent = (toolId: string, toolName: string, status: 'running' | 'complete' | 'error') => void;
+export type OnToolEvent = (
+  toolId: string,
+  toolName: string,
+  status: 'running' | 'complete' | 'error',
+  meta?: {
+    summary?: string;
+    detail?: string;
+    input?: unknown;
+  },
+) => void;
 
 export interface ConversationResult {
   responseText: string;
@@ -282,7 +291,19 @@ async function consumeStream(
                 input: toolData.input,
               });
               if (onToolEvent) {
-                try { onToolEvent(toolData.id, toolData.name, 'running'); } catch { /* non-critical */ }
+                try {
+                  console.log('[conversation-engine] tool_use event:', JSON.stringify({
+                    id: toolData.id,
+                    name: toolData.name,
+                    summary: typeof toolData.summary === 'string' ? toolData.summary : undefined,
+                    detail: typeof toolData.detail === 'string' ? toolData.detail : undefined,
+                  }));
+                  onToolEvent(toolData.id, toolData.name, 'running', {
+                    summary: typeof toolData.summary === 'string' ? toolData.summary : undefined,
+                    detail: typeof toolData.detail === 'string' ? toolData.detail : undefined,
+                    input: toolData.input,
+                  });
+                } catch { /* non-critical */ }
               }
             } catch { /* skip */ }
             break;
@@ -308,10 +329,21 @@ async function consumeStream(
               }
               if (onToolEvent) {
                 try {
+                  console.log('[conversation-engine] tool_result event:', JSON.stringify({
+                    tool_use_id: resultData.tool_use_id,
+                    name: typeof resultData.name === 'string' ? resultData.name : '',
+                    is_error: !!resultData.is_error,
+                    summary: typeof resultData.summary === 'string' ? resultData.summary : undefined,
+                    detail: typeof resultData.detail === 'string' ? resultData.detail : undefined,
+                  }));
                   onToolEvent(
                     resultData.tool_use_id,
-                    '', // name not available in tool_result, adapter tracks by id
+                    typeof resultData.name === 'string' ? resultData.name : '',
                     resultData.is_error ? 'error' : 'complete',
+                    {
+                      summary: typeof resultData.summary === 'string' ? resultData.summary : undefined,
+                      detail: typeof resultData.detail === 'string' ? resultData.detail : undefined,
+                    },
                   );
                 } catch { /* non-critical */ }
               }

@@ -73,12 +73,16 @@ const LONG_RUNNING_FUNCTION_NAMES = new Set([
 type StreamItemState = {
   announcedToolUses: Set<string>;
   insertedCommandBlocks: Set<string>;
+  toolNames: Map<string, string>;
+  toolInputs: Map<string, unknown>;
 };
 
 function createStreamItemState(): StreamItemState {
   return {
     announcedToolUses: new Set<string>(),
     insertedCommandBlocks: new Set<string>(),
+    toolNames: new Map<string, string>(),
+    toolInputs: new Map<string, unknown>(),
   };
 }
 
@@ -459,6 +463,193 @@ function summarizeOutput(output: string): string | undefined {
   return firstLine.length > 120 ? `${firstLine.slice(0, 117)}...` : firstLine;
 }
 
+function extractAssistantMessageText(payload: Record<string, unknown>): string {
+  if (typeof payload.text === 'string' && payload.text.trim()) {
+    return payload.text;
+  }
+  const content = payload.content;
+  if (!Array.isArray(content)) return '';
+  const parts = content
+    .map((entry) => {
+      if (!entry || typeof entry !== 'object') return '';
+      const block = entry as Record<string, unknown>;
+      if (block.type === 'output_text' && typeof block.text === 'string') {
+        return block.text;
+      }
+      return '';
+    })
+    .filter(Boolean);
+  return parts.join('');
+}
+
+function normalizeLegacyResponseItem(payload: Record<string, unknown>): Record<string, unknown> | null {
+  const itemType = payload.type as string | undefined;
+  if (!itemType) return null;
+
+  if (itemType === 'message') {
+    const role = payload.role as string | undefined;
+    if (role !== 'assistant') return null;
+    const text = extractAssistantMessageText(payload);
+    return text ? { type: 'agent_message', text } : null;
+  }
+
+  if (itemType === 'function_call') {
+    return {
+      ...payload,
+      status: payload.status || 'in_progress',
+    };
+  }
+
+  if (itemType === 'function_call_output') {
+    return payload;
+  }
+
+  if (itemType === 'custom_tool_call' || itemType === 'custom_tool_call_output' || itemType === 'command_execution') {
+    return payload;
+  }
+
+  return null;
+}
+
+function normalizeLegacyEventMessage(payload: Record<string, unknown>): Record<string, unknown> | null {
+  const payloadType = payload.type as string | undefined;
+  if (payloadType === 'agent_message' && typeof payload.message === 'string' && payload.message.trim()) {
+    return {
+      type: 'agent_message',
+      text: payload.message,
+    };
+  }
+  return null;
+}
+
+function pluralizeSubagent(count: number): string {
+  return count === 1 ? 'subagent' : 'subagents';
+}
+
+function tryParseJsonObject(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== 'string') {
+    return value && typeof value === 'object' && !Array.isArray(value)
+      ? value as Record<string, unknown>
+      : null;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = JSON.parse(trimmed);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function summarizeStructuredToolUse(name: string, input: unknown): { summary: string; detail?: string } {
+  const normalizedName = name.trim();
+  if (normalizedName === 'wait_agent') {
+    const parsed = input && typeof input === 'object' ? input as Record<string, unknown> : null;
+    const targets = Array.isArray(parsed?.targets) ? parsed.targets.filter(target => typeof target === 'string') : [];
+    const count = targets.length;
+    return {
+      summary: count > 0
+        ? `Waiting on ${count} ${pluralizeSubagent(count)}`
+        : 'Waiting on subagents',
+      detail: count > 0 ? targets.join(', ') : undefined,
+    };
+  }
+
+  if (normalizedName === 'spawn_agent') {
+    const parsed = input && typeof input === 'object' ? input as Record<string, unknown> : null;
+    const agentType = typeof parsed?.agent_type === 'string' && parsed.agent_type.trim()
+      ? parsed.agent_type.trim()
+      : 'default';
+    const model = typeof parsed?.model === 'string' && parsed.model.trim()
+      ? parsed.model.trim()
+      : '';
+    return {
+      summary: 'Spawning subagent',
+      detail: model ? `${agentType} · ${model}` : agentType,
+    };
+  }
+
+  if (normalizedName === 'send_input' || normalizedName === 'resume_agent') {
+    const parsed = input && typeof input === 'object' ? input as Record<string, unknown> : null;
+    const target = typeof parsed?.target === 'string' ? parsed.target : '';
+    return {
+      summary: normalizedName === 'send_input' ? 'Coordinating subagents' : 'Resuming subagent',
+      detail: target || undefined,
+    };
+  }
+
+  return { summary: normalizedName || 'Running tool' };
+}
+
+function summarizeStructuredToolResult(
+  name: string,
+  input: unknown,
+  output: string,
+  isError: boolean,
+): { summary: string; detail?: string } {
+  const normalizedName = name.trim();
+  if (isError) {
+    return {
+      summary: `${normalizedName || 'Tool'} failed`,
+      detail: summarizeOutput(output),
+    };
+  }
+
+  const parsed = tryParseJsonObject(output);
+
+  if (normalizedName === 'spawn_agent') {
+    const nickname = typeof parsed?.nickname === 'string' && parsed.nickname.trim() ? parsed.nickname.trim() : '';
+    const agentId = typeof parsed?.agent_id === 'string' ? parsed.agent_id : '';
+    return {
+      summary: nickname ? `Spawned ${nickname}` : 'Spawned subagent',
+      detail: nickname && agentId ? `${nickname} · ${agentId}` : agentId || undefined,
+    };
+  }
+
+  if (normalizedName === 'wait_agent') {
+    const status = parsed?.status;
+    if (status && typeof status === 'object' && !Array.isArray(status)) {
+      const entries = Object.entries(status as Record<string, unknown>);
+      const completed = entries.filter(([, value]) => value && typeof value === 'object' && 'completed' in (value as Record<string, unknown>)).length;
+      const running = entries.length - completed;
+      const parts: string[] = [];
+      if (completed > 0) parts.push(`${completed} done`);
+      if (running > 0) parts.push(`${running} pending`);
+      return {
+        summary: parts.length > 0 ? `Subagents: ${parts.join(', ')}` : 'Subagents completed',
+        detail: entries.slice(0, 4).map(([agentId, value]) => {
+          const record = value && typeof value === 'object' ? value as Record<string, unknown> : null;
+          if (typeof record?.completed === 'string' && record.completed.trim()) {
+            return `${agentId}: ${record.completed.trim()}`;
+          }
+          return `${agentId}: pending`;
+        }).join(' · ') || undefined,
+      };
+    }
+    const fallback = summarizeStructuredToolUse(normalizedName, input);
+    return {
+      summary: fallback.summary.replace(/^Waiting on/i, 'Finished waiting on'),
+      detail: fallback.detail,
+    };
+  }
+
+  if (normalizedName === 'send_input' || normalizedName === 'resume_agent') {
+    const fallback = summarizeStructuredToolUse(normalizedName, input);
+    return {
+      summary: normalizedName === 'send_input' ? 'Subagent updated' : 'Subagent resumed',
+      detail: fallback.detail,
+    };
+  }
+
+  return {
+    summary: `${normalizedName || 'Tool'} completed`,
+    detail: summarizeOutput(output),
+  };
+}
+
 export class CodexProvider implements LLMProvider {
   private sdk: CodexModule | null = null;
   private codex: CodexInstance | null = null;
@@ -738,6 +929,28 @@ export class CodexProvider implements LLMProvider {
                       break;
                     }
 
+                    case 'response_item': {
+                      const item = normalizeLegacyResponseItem((event.payload || {}) as Record<string, unknown>);
+                      if (!item) break;
+                      if (!longRunningToolHint && isLongRunningFunctionItem(item)) {
+                        longRunningToolHint = describeLongRunningFunctionItem(item) || 'running a long task';
+                        armIdleWatchdog();
+                      }
+                      if (item.type === 'function_call' || item.type === 'custom_tool_call' || item.type === 'command_execution') {
+                        self.handleStartedItem(controller, item, streamState);
+                      } else {
+                        self.handleCompletedItem(controller, item, streamState);
+                      }
+                      break;
+                    }
+
+                    case 'event_msg': {
+                      const item = normalizeLegacyEventMessage((event.payload || {}) as Record<string, unknown>);
+                      if (!item) break;
+                      self.handleCompletedItem(controller, item, streamState);
+                      break;
+                    }
+
                     case 'turn.completed': {
                       const usage = event.usage as Record<string, unknown> | undefined;
                       const threadId = self.threadIds.get(params.sessionId);
@@ -880,13 +1093,17 @@ export class CodexProvider implements LLMProvider {
         const name = getToolItemName(item);
         const input = parseStructuredToolInput(item.arguments ?? item.input);
         const status = item.status as string | undefined;
+        streamState.toolNames.set(toolId, name);
+        streamState.toolInputs.set(toolId, input);
 
         if (status === 'in_progress' && !streamState.announcedToolUses.has(toolId)) {
+          const structuredSummary = summarizeStructuredToolUse(name, input);
           controller.enqueue(sseEvent('tool_use', {
             id: toolId,
             name,
             input,
-            summary: name || 'Running tool',
+            summary: structuredSummary.summary || name || 'Running tool',
+            detail: structuredSummary.detail,
           }));
           streamState.announcedToolUses.add(toolId);
         }
@@ -976,23 +1193,29 @@ export class CodexProvider implements LLMProvider {
         const output = item.output as string | undefined;
         const error = item.error as { message?: string } | string | undefined;
         const errorMessage = typeof error === 'string' ? error : error?.message;
+        streamState.toolNames.set(toolId, name);
+        streamState.toolInputs.set(toolId, input);
 
         if (!streamState.announcedToolUses.has(toolId)) {
+          const structuredSummary = summarizeStructuredToolUse(name, input);
           controller.enqueue(sseEvent('tool_use', {
             id: toolId,
             name,
             input,
-            summary: name || 'Running tool',
+            summary: structuredSummary.summary || name || 'Running tool',
+            detail: structuredSummary.detail,
           }));
           streamState.announcedToolUses.add(toolId);
         }
 
+        const structuredResult = summarizeStructuredToolResult(name, input, errorMessage || output || '', !!errorMessage);
         controller.enqueue(sseEvent('tool_result', {
           tool_use_id: toolId,
+          name,
           content: errorMessage || output || 'Done',
           is_error: !!errorMessage,
-          summary: errorMessage ? `${name || 'Tool'} failed` : `${name || 'Tool'} completed`,
-          detail: summarizeOutput(errorMessage || output || ''),
+          summary: structuredResult.summary,
+          detail: structuredResult.detail,
         }));
         break;
       }
@@ -1001,12 +1224,16 @@ export class CodexProvider implements LLMProvider {
       case 'custom_tool_call_output': {
         const toolId = getToolItemId(item);
         const output = item.output as string | undefined;
+        const name = streamState.toolNames.get(toolId) || '';
+        const input = streamState.toolInputs.get(toolId);
+        const structuredResult = summarizeStructuredToolResult(name, input, output || '', false);
         controller.enqueue(sseEvent('tool_result', {
           tool_use_id: toolId,
+          name,
           content: output || 'Done',
           is_error: false,
-          summary: 'Tool completed',
-          detail: summarizeOutput(output || ''),
+          summary: structuredResult.summary,
+          detail: structuredResult.detail,
         }));
         break;
       }

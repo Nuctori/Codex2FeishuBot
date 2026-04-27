@@ -13,6 +13,13 @@ const TOOL_ICON_BY_STATUS: Record<string, string> = {
   error: '\u274C',
 };
 
+const SUBAGENT_TOOL_NAMES = new Set([
+  'spawn_agent',
+  'wait_agent',
+  'send_input',
+  'resume_agent',
+]);
+
 type ToolProgressGroup = {
   name: string;
   summaries: string[];
@@ -20,6 +27,10 @@ type ToolProgressGroup = {
   complete: number;
   error: number;
   total: number;
+};
+
+type ToolProgressOptions = {
+  elapsedMs?: number;
 };
 
 export function hasComplexMarkdown(text: string): boolean {
@@ -76,11 +87,71 @@ export function htmlToFeishuMarkdown(html: string): string {
     .trim();
 }
 
-export function buildToolProgressMarkdown(tools: ToolCallInfo[]): string {
-  if (tools.length === 0) return '';
+function truncateInline(text: string, maxLength: number): string {
+  const normalized = text.replace(/\s+/g, ' ').trim();
+  if (!normalized) return '';
+  return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 3)}...` : normalized;
+}
+
+function isSubagentTool(tool: ToolCallInfo): boolean {
+  return SUBAGENT_TOOL_NAMES.has(tool.name.trim());
+}
+
+export function hasRunningSubagentTools(tools: ToolCallInfo[]): boolean {
+  return tools.some(tool => isSubagentTool(tool) && tool.status === 'running');
+}
+
+export function buildSubagentProgressMarkdown(tools: ToolCallInfo[], options?: ToolProgressOptions): string {
+  const relevant = tools.filter(isSubagentTool);
+  if (relevant.length === 0) return '';
+
+  const runningCount = relevant.filter(tool => tool.status === 'running').length;
+  const headerParts = [
+    `**${localizeText('Subagents', '子代理')}**`,
+    runningCount > 0
+      ? localizeText(`${runningCount} active`, `${runningCount} 个进行中`)
+      : localizeText(`${relevant.length} tracked`, `${relevant.length} 个已跟踪`),
+  ];
+  if (runningCount > 0 && typeof options?.elapsedMs === 'number' && options.elapsedMs >= 0) {
+    headerParts.push(formatElapsed(options.elapsedMs));
+  }
+
+  const lines = relevant
+    .slice()
+    .sort((left, right) => {
+      const rank = (tool: ToolCallInfo): number => {
+        if (tool.status === 'running') return 0;
+        if (tool.status === 'error') return 1;
+        return 2;
+      };
+      const rankDelta = rank(left) - rank(right);
+      if (rankDelta !== 0) return rankDelta;
+      return (right.updatedAt || 0) - (left.updatedAt || 0);
+    })
+    .slice(0, 4)
+    .map((tool) => {
+      const icon = TOOL_ICON_BY_STATUS[tool.status] || TOOL_ICON_BY_STATUS.running;
+      const summary = truncateInline(
+        tool.summary || tool.name || localizeText('Subagent task', '子代理任务'),
+        72,
+      );
+      const detail = truncateInline(tool.detail || '', 42);
+      return detail ? `- ${icon} ${summary} · ${detail}` : `- ${icon} ${summary}`;
+    });
+
+  if (relevant.length > 4) {
+    lines.push(`- ${localizeText(`+${relevant.length - 4} more`, `还有 ${relevant.length - 4} 个`)}`);
+  }
+
+  return [headerParts.join(' · '), ...lines].join('\n');
+}
+
+export function buildGenericToolProgressMarkdown(tools: ToolCallInfo[]): string {
+  const genericTools = tools.filter(tool => !isSubagentTool(tool));
+  if (genericTools.length === 0) return '';
 
   const groups = new Map<string, ToolProgressGroup>();
-  for (const toolCall of tools) {
+  for (const toolCall of genericTools) {
     const name = toolCall.name.trim() || localizeText('Tool', '工具');
     const key = name.toLowerCase();
     const group = groups.get(key) ?? {
@@ -132,6 +203,15 @@ export function buildToolProgressMarkdown(tools: ToolCallInfo[]): string {
     .join('\n');
 }
 
+export function buildToolProgressMarkdown(tools: ToolCallInfo[], options?: ToolProgressOptions): string {
+  const sections: string[] = [];
+  const subagentMd = buildSubagentProgressMarkdown(tools, options);
+  const genericMd = buildGenericToolProgressMarkdown(tools);
+  if (subagentMd) sections.push(subagentMd);
+  if (genericMd) sections.push(genericMd);
+  return sections.join('\n\n');
+}
+
 export function formatElapsed(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
   const sec = ms / 1000;
@@ -141,32 +221,30 @@ export function formatElapsed(ms: number): string {
   return `${min}m ${remSec}s`;
 }
 
-export function buildStreamingContent(text: string, tools: ToolCallInfo[]): string {
-  let content = text || '';
-  const toolMd = buildToolProgressMarkdown(tools);
+export function buildStreamingContent(text: string, tools: ToolCallInfo[], options?: ToolProgressOptions): string {
+  const sections: string[] = [];
+  const toolMd = buildToolProgressMarkdown(tools, options);
   if (toolMd) {
-    content = content ? `${content}\n\n${toolMd}` : toolMd;
+    sections.push(toolMd);
   }
-  return content || localizeText('\u{1F9E0} Thinking...', '\u{1F9E0} \u6B63\u5728\u601D\u8003...');
+  if (text) {
+    sections.push(text);
+  }
+  return sections.join('\n\n') || localizeText('\u{1F9E0} Thinking...', '\u{1F9E0} 正在思考...');
 }
 
 function normalizeFooterStatus(status: string): string {
   return status
-    .replace(/^.*Completed$/i, localizeText('\u2705 Completed', '\u2705 \u5DF2\u5B8C\u6210'))
-    .replace(/^.*Interrupted$/i, localizeText('\u26A0\uFE0F Interrupted', '\u26A0\uFE0F \u5DF2\u4E2D\u65AD'))
-    .replace(/^.*Error$/i, localizeText('\u274C Error', '\u274C \u51FA\u9519'));
+    .replace(/^.*Completed$/i, localizeText('\u2705 Completed', '\u2705 已完成'))
+    .replace(/^.*Interrupted$/i, localizeText('\u26A0\uFE0F Interrupted', '\u26A0\uFE0F 已中断'))
+    .replace(/^.*Error$/i, localizeText('\u274C Error', '\u274C 出错'));
 }
 
-export function buildFinalCardJson(
-  text: string,
-  tools: ToolCallInfo[],
-  footer: { status: string; elapsed: string } | null,
-  navContext?: FeishuCardNavContext | null,
-): string {
-  const elements: Array<Record<string, unknown>> = [];
+function buildNavElements(navContext?: FeishuCardNavContext | null): Array<Record<string, unknown>> {
+  if (!navContext) return [];
 
-  if (navContext) {
-    elements.push({
+  const elements: Array<Record<string, unknown>> = [
+    {
       tag: 'column_set',
       flex_mode: 'none',
       columns: [
@@ -185,7 +263,7 @@ export function buildFinalCardJson(
           width: 'auto',
           elements: [{
             tag: 'button',
-            text: { tag: 'plain_text', content: localizeText('Sessions', '\u4F1A\u8BDD') },
+            text: { tag: 'plain_text', content: localizeText('Sessions', '会话') },
             type: 'primary',
             size: 'small',
             value: {
@@ -196,32 +274,63 @@ export function buildFinalCardJson(
           }],
         },
       ],
-    });
-    elements.push({
+    },
+    {
       tag: 'markdown',
       content: `\`${navContext.projectPath}\``,
       text_size: 'notation',
-    });
-    if (navContext.sessionLabel) {
-      elements.push({
-        tag: 'markdown',
-        content: navContext.sessionLabel,
-        text_size: 'notation',
-      });
-    }
-    elements.push({ tag: 'hr' });
-  }
+    },
+  ];
 
-  let content = preprocessFeishuMarkdown(text);
-  const toolMd = buildToolProgressMarkdown(tools);
-  if (toolMd) {
-    content = content ? `${content}\n\n${toolMd}` : toolMd;
-  }
-
-  if (content) {
+  if (navContext.sessionLabel) {
     elements.push({
       tag: 'markdown',
-      content,
+      content: navContext.sessionLabel,
+      text_size: 'notation',
+    });
+  }
+
+  elements.push({ tag: 'hr' });
+  return elements;
+}
+
+function buildCardElements(
+  text: string,
+  tools: ToolCallInfo[],
+  navContext?: FeishuCardNavContext | null,
+  footer?: { status: string; elapsed: string } | null,
+  options?: ToolProgressOptions & { fallbackThinking?: boolean },
+): Array<Record<string, unknown>> {
+  const elements: Array<Record<string, unknown>> = [...buildNavElements(navContext)];
+  const subagentMd = buildSubagentProgressMarkdown(tools, options);
+  const genericMd = buildGenericToolProgressMarkdown(tools);
+  const bodyMd = preprocessFeishuMarkdown(text).trim()
+    || (options?.fallbackThinking ? localizeText('Thinking...', '正在思考...') : '');
+
+  if (subagentMd) {
+    elements.push({
+      tag: 'markdown',
+      content: subagentMd,
+      text_align: 'left',
+      text_size: 'normal',
+    });
+  }
+
+  if (genericMd) {
+    if (subagentMd) elements.push({ tag: 'hr' });
+    elements.push({
+      tag: 'markdown',
+      content: genericMd,
+      text_align: 'left',
+      text_size: 'normal',
+    });
+  }
+
+  if (bodyMd) {
+    if (subagentMd || genericMd) elements.push({ tag: 'hr' });
+    elements.push({
+      tag: 'markdown',
+      content: bodyMd,
       text_align: 'left',
       text_size: 'normal',
     });
@@ -235,16 +344,47 @@ export function buildFinalCardJson(
       elements.push({ tag: 'hr' });
       elements.push({
         tag: 'markdown',
-        content: parts.join(' \u00B7 '),
+        content: parts.join(' · '),
         text_size: 'notation',
       });
     }
   }
 
+  return elements;
+}
+
+export function buildStreamingCardJson(
+  text: string,
+  tools: ToolCallInfo[],
+  navContext?: FeishuCardNavContext | null,
+  options?: ToolProgressOptions,
+): string {
   return JSON.stringify({
     schema: '2.0',
     config: { wide_screen_mode: true },
-    body: { elements },
+    body: {
+      elements: buildCardElements(text, tools, navContext, null, {
+        ...options,
+        fallbackThinking: true,
+      }),
+    },
+  });
+}
+
+export function buildFinalCardJson(
+  text: string,
+  tools: ToolCallInfo[],
+  footer: { status: string; elapsed: string } | null,
+  navContext?: FeishuCardNavContext | null,
+): string {
+  return JSON.stringify({
+    schema: '2.0',
+    config: { wide_screen_mode: true },
+    body: {
+      elements: buildCardElements(text, tools, navContext, footer, {
+        fallbackThinking: false,
+      }),
+    },
   });
 }
 

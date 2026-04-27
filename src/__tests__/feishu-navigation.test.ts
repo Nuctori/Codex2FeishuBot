@@ -6,7 +6,7 @@ import path from 'node:path';
 import { FeishuAdapter } from '../bridge/adapters/feishu-adapter.js';
 import { initBridgeContext } from '../bridge/context.js';
 import { _testOnly as bridgeTestOnly } from '../bridge/bridge-manager.js';
-import { buildStreamingContent, buildToolProgressMarkdown } from '../bridge/markdown/feishu.js';
+import { buildStreamingCardJson, buildStreamingContent, buildToolProgressMarkdown } from '../bridge/markdown/feishu.js';
 
 import { CTI_HOME } from '../config.js';
 import { JsonFileStore } from '../store.js';
@@ -958,8 +958,9 @@ describe('Feishu navigation cards', () => {
 
     assert.match(markdown, /\*\*(Subagents|子代理)\*\*/);
     assert.match(markdown, /(3m 12s|192000ms)/);
-    assert.match(markdown, /Waiting on 2 subagents/);
-    assert.match(markdown, /Spawned Harvey/);
+    assert.match(markdown, /(Harvey|worker-2)/);
+    assert.match(markdown, /Recent events|最近事件/);
+    assert.match(markdown, /Main session|主会话/);
     assert.match(markdown, /`Bash`/);
   });
 
@@ -976,7 +977,36 @@ describe('Feishu navigation cards', () => {
     ], { elapsedMs: 65000 });
 
     assert.ok(content.indexOf('Subagents') >= 0 || content.indexOf('子代理') >= 0);
-    assert.ok(content.indexOf('Final text body') > content.indexOf('Waiting on 1 subagent'));
+    const sessionMarker = content.includes('Main session') ? 'Main session' : '主会话';
+    assert.ok(content.indexOf('Final text body') > content.indexOf(sessionMarker));
+  });
+
+  it('renders subagent history in a collapsible panel inside streaming cards', () => {
+    const card = JSON.parse(buildStreamingCardJson('Working on it', [
+      {
+        id: 'tool-1',
+        name: 'spawn_agent',
+        status: 'complete',
+        summary: 'Spawned Harvey',
+        detail: 'Harvey · agent-1',
+        updatedAt: 1,
+      },
+      {
+        id: 'tool-2',
+        name: 'wait_agent',
+        status: 'complete',
+        summary: 'Timed out waiting on subagents',
+        detail: 'agent-1',
+        updatedAt: 2,
+      },
+    ], undefined, { elapsedMs: 5000 }));
+
+    const elements = card?.body?.elements ?? [];
+    assert.equal(elements.some((element: any) => element?.tag === 'collapsible_panel'), true);
+    assert.equal(elements.some((element: any) => {
+      const content = String(element?.content || '');
+      return content.includes('Main session') || content.includes('主会话');
+    }), true);
   });
 
   it('does not create a second card when an in-place update fails', async () => {
